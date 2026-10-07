@@ -1,0 +1,23 @@
+{
+  "product_version": "1.0.0-alpha.1",
+  "date": "2026-10-07",
+  "checks": [
+    {"name": "base_python_registry_metadata", "status": "passed", "detail": "Actual OCI index and linux/amd64, linux/arm64 manifests recorded in supply-chain.lock.json"},
+    {"name": "candidate_keycloak_registry_metadata", "status": "passed", "detail": "Actual 26.8.0 OCI index and platform manifests recorded; no IdP execution"},
+    {"name": "tunnel_download_sha256", "status": "passed", "detail": "Linux amd64/arm64 runtime v0.0.16 bytes compared with GitHub release API asset digests"},
+    {"name": "tunnel_archive_structure", "status": "passed", "detail": "Safe ZIP names, bounded expanded bytes, identical embedded SPDX/license sidecars, payload SHA256 matches SPDX inventory"},
+    {"name": "tunnel_elf_architecture", "status": "passed", "detail": "64-bit ELF machine amd64=62 and arm64=183; neither payload has PT_INTERP. No Linux execution claimed"},
+    {"name": "plugin_manifest", "status": "passed", "detail": "Base portable plugin.json validates official downloaded Agent Plugins1.0.0 JSON Schema"},
+    {"name": "plugin_skills_only_zip", "status": "passed", "detail": "ZIP SHA256 verified, 5 safe files, no hooks, mcp.json or fabricated registered mapping"},
+    {"name": "plugin_invalid_connection_inputs", "status": "passed", "detail": "Malformed server ID and insecure local HTTP URL refused before package creation"},
+    {"name": "packaging_python_syntax", "status": "passed", "detail": "package_release, package_plugin, verify_supply_chain compiled on local bundled Python"},
+    {"name": "python_lock_sbom", "status": "passed", "detail": "34 locked Python components, distribution hashes and local installed-version matches; validates official CycloneDX1.6 schema. No OCI inventory, license reconstruction or vulnerability audit claimed"},
+    {"name": "gateway_secret_wiring", "status": "passed", "detail": "Windows local fixtures verify fixed filenames, bounded secret reads and explicit introspection secret wiring; symlink privilege unavailable, Linux nofollow/ownership and real IdP unverified"},
+    {"name": "product_container_build", "status": "unverified", "detail": "Docker not found in local Windows environment"},
+    {"name": "tunnel_sigstore_provenance", "status": "unverified", "detail": "Provenance bundle downloaded/checksum observed, signature verification not executed"},
+    {"name": "tunnel_linux_runtime", "status": "unverified", "detail": "Actual --version/run/readiness on HA OS amd64/aarch64 required"},
+    {"name": "ha_os_install_isolation", "status": "unverified", "detail": "Protected mode/AppArmor/process credentials and sources require real HA OS"},
+    {"name": "idp_chatgpt_oauth", "status": "unverified", "detail": "Keycloak candidate resource-indicators experimental; actual full PKCE/resource flow absent"},
+    {"name": "chatgpt_plugin_registration", "status": "unverified", "detail": "No accessible account registration or real registered server ID available"}
+  ]
+}

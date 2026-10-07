@@ -1,0 +1,36 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "cursor": {
+      "anyOf": [
+        {
+          "maxLength": 2048,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cursor"
+    },
+    "query": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Query",
+      "type": "string"
+    },
+    "limit": {
+      "default": 20,
+      "maximum": 20,
+      "minimum": 1,
+      "title": "Limit",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "query"
+  ],
+  "title": "Find",
+  "type": "object"
+}

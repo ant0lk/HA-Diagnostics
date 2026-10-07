@@ -1,0 +1,58 @@
+{
+  "schema_version": "1.0",
+  "product_version": "1.0.0-alpha.1",
+  "verified_at": "2026-10-07",
+  "runtime_requirements": {
+    "python_container": "3.13.12",
+    "sqlite_minimum": "3.40.0",
+    "sqlite_required_features": ["FTS5"],
+    "archive_database_schema": "2",
+    "output_data_schema": "1",
+    "local_verified_sqlite": "3.53.1",
+    "container_sqlite_execution_verified": false,
+    "fts_secure_delete": "Conditional; available since SQLite3.42.0. Updated/deleted FTS indexes using it require compatible engine or verified rebuild before downgrade.",
+    "sqlite_reference": "https://sqlite.org/fts5.html#the_secure_delete_configuration_option"
+  },
+  "images": {
+    "python": {
+      "tag": "docker.io/library/python:3.13.12-slim-bookworm",
+      "index_digest": "sha256:a58daefb915e1e03ad48f3ca4df8832065412c5c35cacb9d39f4229184de12b6",
+      "platforms": {"linux/amd64": "sha256:3121f8b0804aa3698ab750d9a39ea4a42657a385c9b133722b915e55c51551a6", "linux/arm64": "sha256:34b27ac66ecf318887b55ea3c71f0db9307895efe631210231a66cc3fa130cf9"},
+      "verification": "Registry manifests fetched, index/platform identifiers observed; image build/execution unverified"
+    },
+    "keycloak_candidate": {
+      "tag": "quay.io/keycloak/keycloak:26.8.0",
+      "index_digest": "sha256:b0f60d489d51c5d113390bdf5461d4c06e6051be026c05549f2e1e10ec352bcc",
+      "platforms": {"linux/amd64": "sha256:d79bc4bf1c54e802735ef91926b5c003de1fbb50b1a93382611972277219c9ad", "linux/arm64": "sha256:6741e706bd2cc2fcc2c97a74f227589c7283e44cdb210e47ea99258f243f6f74"},
+      "verification": "Registry manifests fetched; OAuth resource-indicators experimental; IdP flow not accepted"
+    }
+  },
+  "tunnel": {
+    "version": "0.0.16",
+    "release_url": "https://github.com/openai/tunnel-client/releases/tag/v0.0.16",
+    "discovery_url": "https://github.com/openai/tunnel-client/releases/latest",
+    "flavor": "runtime",
+    "license_summary": ["Apache-2.0", "BSD-3-Clause", "MIT"],
+    "verification": "Downloaded archive SHA256 compared with GitHub release API digest. SPDX payload and ELF machine verified by script. Linux execution, account readiness and Sigstore signature not verified.",
+    "artifacts": {
+      "amd64": {
+        "archive": {"name": "tunnel-client-runtime-v0.0.16-linux-amd64.zip", "sha256": "f8f48017e752810c2c6f02065cdc4ca1ad045b91a6d045cbab144b957fdcbdb1"},
+        "sbom": {"name": "tunnel-client-runtime-v0.0.16-linux-amd64.spdx.json", "sha256": "19242dd91646aaaa0d3873637f16dd68456c5edd8eff0b4dbc2e3a71ca6a16e6"},
+        "licenses": {"name": "tunnel-client-runtime-v0.0.16-linux-amd64-licenses.txt", "sha256": "228754b49354a9063282612d3f663edf78f0db16bc81fb6d5e1369ee6e8c325c"},
+        "binary_sha256": "35183d94445c4c11a9d2f2aba52d23b3581c3580bf3998226a33a904c85f37d0"
+      },
+      "arm64": {
+        "archive": {"name": "tunnel-client-runtime-v0.0.16-linux-arm64.zip", "sha256": "ec3bc4815e1b9f7a0773b24de45f64841d9aebe170a58b62742e3f1cef4ac088"},
+        "sbom": {"name": "tunnel-client-runtime-v0.0.16-linux-arm64.spdx.json", "sha256": "84c352a6fecb33473d95e657003ebc77fec1d39dd80cfc05bc47a6242263bc1c"},
+        "licenses": {"name": "tunnel-client-runtime-v0.0.16-linux-arm64-licenses.txt", "sha256": "4c4b2a6172d433653d13d8a14ab2e143b4c6c7bdeccf0e67a3e0a0e24fe6159b"},
+        "binary_sha256": "503b5444aed72160c815f088fab5fb53e7f5ec02e43b7286179f3b91db50b3f1"
+      }
+    }
+  },
+  "published_product_images": [],
+  "plugin_schemas": {
+    "plugin": {"url": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json", "path": "plugin/schemas/plugin.schema.json", "sha256": "0a4aad95ce337878ad38802ebf0daa3fde76abe3f65400c86bcbb1ec0b3ab883"},
+    "mcp": {"url": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json", "path": "plugin/schemas/mcp.schema.json", "sha256": "6539175bfcdf43085855183e86da40ea94b166547a72b47ae9a0a390516d3acb"}
+  },
+  "remaining": ["Linux image builds for both architectures", "Sigstore provenance verification", "Complete app image SBOM and vulnerability scan", "Target tunnel runtime smoke", "HA OS and ChatGPT acceptance"]
+}

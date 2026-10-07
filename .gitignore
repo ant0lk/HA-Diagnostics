@@ -1,0 +1,26 @@
+/AGENTS.md
+/.venv/
+/.local-data/
+/.pytest_cache/
+/.test-results/
+/.coverage
+/dist/
+/containers/vendor/
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.sqlite*
+*.secret
+*.key
+*.private
+enrollment-state.json
+device-channel-key
+relay-device-key
+control-plane-api-key
+.env
+
+# Owner input documents and preserved local packaging templates.
+/docs/TECHNICAL_SPEC.md
+/docs/ARCHITECTURE.md
+/docs/CHATGPT_PROMPT.md
+/ha_diagnostics/

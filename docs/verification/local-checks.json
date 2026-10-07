@@ -1,0 +1,163 @@
+{
+  "product_version": "1.0.0-alpha.1",
+  "date": "2026-10-07",
+  "environment": {
+    "python": "3.12.14",
+    "sqlite": "3.53.1",
+    "mcp_sdk": "2.3.0",
+    "platform": "win32",
+    "docker_available": false,
+    "linux_runtime_available": false
+  },
+  "pytest": {
+    "tests": 238,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 1,
+    "passed": 237,
+    "seconds": 52.043,
+    "junit_sha256": "f5f7fe31b5a9cb6cfa4c852a49a6578631f6284b47b87831f4e5f60aeb30e3c5"
+  },
+  "benchmark": {
+    "product_version": "1.0.0-alpha.1",
+    "schema_version": 2,
+    "python": "3.12.14",
+    "platform": "win32",
+    "fixture": {
+      "sources": 4,
+      "records_requested": 10000,
+      "records_saved": 10000,
+      "input_bytes": 788406,
+      "input_sha256": "460fef69c91a86006fb63eba77d9ba895f668ea5b33f52b52bb790eb7f942a32",
+      "anchor_utc": "2026-10-07T08:00:00Z",
+      "seed": "deterministic_index_v1",
+      "source": "generated_synthetic_only"
+    },
+    "measurements": {
+      "ingest_seconds": 22.3716,
+      "ingest_process_cpu_seconds": 19.5,
+      "query_count": 100,
+      "query_p95_ms": 72.029,
+      "query_median_ms": 52.858,
+      "summary_ms": 52.017,
+      "database_wal_shm_bytes": 10883072,
+      "python_heap_peak_bytes": 996190
+    },
+    "limitations": [
+      "Python heap is not process RSS.",
+      "Tracemalloc affects timings.",
+      "Not HA OS hardware or container/tunnel acceptance.",
+      "No 15-minute steady-state, 60-second burst or 24-hour soak.",
+      "1-million-record criterion is unverified unless this exact run records that count."
+    ]
+  },
+  "checks": [
+    {
+      "name": "unit_fixture_and_local_http",
+      "status": "passed",
+      "evidence": "pytest-junit.xml"
+    },
+    {
+      "name": "mcp_sdk_legacy_2025_11_25_and_modern_2026_07_28",
+      "status": "passed",
+      "evidence": "tests.test_mcp and tests.test_output_schemas"
+    },
+    {
+      "name": "ui_browser_render_360_keyboard_synthetic_preview",
+      "status": "passed",
+      "evidence": "ui-desktop.jpg, ui-mobile.jpg, ui-preview.jpg; local import-only, not HA Ingress"
+    },
+    {
+      "name": "docker_ha_os_process_isolation",
+      "status": "unverified"
+    },
+    {
+      "name": "actual_ha_reads_both_architectures",
+      "status": "unverified"
+    },
+    {
+      "name": "full_idp_pkce_resource_refresh_revocation",
+      "status": "unverified"
+    },
+    {
+      "name": "mcp_inspector",
+      "status": "unverified"
+    },
+    {
+      "name": "tunnel_linux_runtime_and_account",
+      "status": "unverified"
+    },
+    {
+      "name": "real_chatgpt_registered_plugin_dialogue",
+      "status": "unverified"
+    },
+    {
+      "name": "gateway_tls_real_roundtrip",
+      "status": "unverified"
+    },
+    {
+      "name": "million_records_steady_burst_aggregate_rss_24h_soak",
+      "status": "unverified"
+    },
+    {
+      "name": "container_image_sbom_vulnerability_sigstore",
+      "status": "unverified"
+    },
+    {
+      "name": "bootstrap_descriptor_nofollow_hardlink_restart_contract",
+      "status": "passed",
+      "evidence": "tests.test_runtime_bootstrap; Linux ownership emulated, real Windows hardlinks; actual Linux remains unverified"
+    },
+    {
+      "name": "modern_gateway_relay_actual_mcp_sdk",
+      "status": "passed",
+      "evidence": "tests.test_relay; ASGI fixed endpoint, routing mismatch, challenge/rate headers, empty legacy202; TLS/ChatGPT unverified"
+    }
+  ],
+  "git_commit_push_or_publication_performed": false,
+  "owner_input_documents_rewritten": false,
+  "local_process_http_smoke": {
+    "ui_index_status": 200,
+    "ui_api_status": 200,
+    "version": "1.0.0-alpha.1",
+    "mode": "import_only",
+    "coverage_present": true,
+    "audit_present": true,
+    "local_preview_present": true,
+    "artifact_actions_present": true,
+    "visual_check": true
+  },
+  "ha_reachability_probe": {
+    "attempted_without_credentials": true,
+    "address_recorded": false,
+    "reachable": false,
+    "protected_reads_verified": false
+  },
+  "browser": {
+    "local_demo": true,
+    "desktop_light": true,
+    "mobile_360_light": true,
+    "page_overflow_at_360": false,
+    "tab_enter_navigation": true,
+    "dark_synthetic_preview": true,
+    "browser_commit_revoke_delete_tested": false,
+    "ha_ingress_tested": false,
+    "screenshots": [
+      {
+        "name": "ui-desktop.jpg",
+        "bytes": 63817,
+        "sha256": "60aeeedcfafcd7d6be9bf5809d41223d466f75304c9fd1be21381f81e9496784"
+      },
+      {
+        "name": "ui-mobile.jpg",
+        "bytes": 29659,
+        "sha256": "0d18a459e5cdf45110b1ce001b660cb1b6dbed763f8a9ea06523189ca4d908f8"
+      },
+      {
+        "name": "ui-preview.jpg",
+        "bytes": 65131,
+        "sha256": "de585402829ea30380c6fbb7c9f25d6a6049d1a6556d261765771aae68f50418"
+      }
+    ]
+  }
+}

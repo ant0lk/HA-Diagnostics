@@ -1,0 +1,43 @@
+name: HA-Diagnostics — Live alpha
+version: 1.0.0-alpha.1
+slug: ha_diagnostics_live
+description: Только диагностические чтения через изолированный broker. Live-приёмка обязательна.
+url: https://github.com/ant0lk/HA-Diagnostics
+arch: [amd64, aarch64]
+homeassistant: "2026.9.4"
+startup: application
+boot: manual
+stage: experimental
+init: true
+ingress: true
+ingress_port: 8099
+ingress_stream: true
+panel_admin: true
+panel_title: HA-Diagnostics
+panel_icon: mdi:clipboard-search-outline
+hassio_api: true
+homeassistant_api: true
+hassio_role: manager
+docker_api: false
+full_access: false
+host_network: false
+host_pid: false
+host_ipc: false
+host_dbus: false
+apparmor: true
+tmpfs: true
+map: []
+ports: {}
+backup: cold
+backup_exclude: ["private", "private/*", "public", "public/*", "query", "query/*", "transport", "transport/*", "ipc", "ipc/*", "options.json"]
+options:
+  mode: live
+  ingress_admin_id: ""
+schema:
+  mode: list(live)
+  ingress_admin_id: str
+environment:
+  HAD_PROFILE: live
+ulimits:
+  core: 0
+  nofile: 1024

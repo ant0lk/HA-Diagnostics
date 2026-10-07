@@ -1,0 +1,29 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "ha-diagnostics",
+  "version": "1.0.0-alpha.1",
+  "description": "Изучает разрешённые журналы и историю Home Assistant, объясняет сбои с доказательствами. Только чтение. Предварительная alpha.",
+  "author": {"name": "ant0lk", "url": "https://github.com/ant0lk"},
+  "homepage": "https://github.com/ant0lk/HA-Diagnostics",
+  "repository": "https://github.com/ant0lk/HA-Diagnostics",
+  "keywords": ["home-assistant", "diagnostics", "read-only", "mcp"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "HA-Diagnostics",
+        "shortDescription": "Диагностика Home Assistant с доказательствами",
+        "longDescription": "Читает только локально разрешённые очищенные журналы, историю состояний и импортированные материалы. Управляющих инструментов нет.",
+        "developerName": "ant0lk",
+        "category": "Productivity",
+        "capabilities": ["Read"],
+        "websiteURL": "https://github.com/ant0lk/HA-Diagnostics",
+        "defaultPrompt": [
+          "Какие ошибки были в Home Assistant за последние сутки?",
+          "Почему вчера вечером устройство стало недоступно?",
+          "Покажи последовательность событий перед сбоем выбранного устройства"
+        ],
+        "brandColor": "#087EA4"
+      }
+    }
+  }
+}

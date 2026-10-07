@@ -1,0 +1,31 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "artifact_id": {
+      "maxLength": 120,
+      "minLength": 1,
+      "pattern": "^[a-zA-Z0-9_:-]+$",
+      "title": "Artifact Id",
+      "type": "string"
+    },
+    "offset": {
+      "default": 0,
+      "maximum": 20971520,
+      "minimum": 0,
+      "title": "Offset",
+      "type": "integer"
+    },
+    "max_chars": {
+      "default": 16000,
+      "maximum": 16000,
+      "minimum": 1,
+      "title": "Max Chars",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "artifact_id"
+  ],
+  "title": "Artifact",
+  "type": "object"
+}

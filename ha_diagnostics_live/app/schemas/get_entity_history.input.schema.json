@@ -1,0 +1,54 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "cursor": {
+      "anyOf": [
+        {
+          "maxLength": 2048,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cursor"
+    },
+    "from": {
+      "maxLength": 40,
+      "title": "From",
+      "type": "string"
+    },
+    "to": {
+      "maxLength": 40,
+      "title": "To",
+      "type": "string"
+    },
+    "entity_refs": {
+      "items": {
+        "maxLength": 120,
+        "minLength": 1,
+        "pattern": "^[a-zA-Z0-9_:-]+$",
+        "type": "string"
+      },
+      "maxItems": 20,
+      "minItems": 1,
+      "title": "Entity Refs",
+      "type": "array"
+    },
+    "limit": {
+      "default": 500,
+      "maximum": 500,
+      "minimum": 1,
+      "title": "Limit",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "from",
+    "to",
+    "entity_refs"
+  ],
+  "title": "History",
+  "type": "object"
+}

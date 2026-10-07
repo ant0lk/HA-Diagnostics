@@ -1,0 +1,49 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "cursor": {
+      "anyOf": [
+        {
+          "maxLength": 2048,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cursor"
+    },
+    "from": {
+      "maxLength": 40,
+      "title": "From",
+      "type": "string"
+    },
+    "to": {
+      "maxLength": 40,
+      "title": "To",
+      "type": "string"
+    },
+    "device_ref": {
+      "maxLength": 120,
+      "minLength": 1,
+      "pattern": "^[a-zA-Z0-9_:-]+$",
+      "title": "Device Ref",
+      "type": "string"
+    },
+    "limit": {
+      "default": 200,
+      "maximum": 200,
+      "minimum": 1,
+      "title": "Limit",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "from",
+    "to",
+    "device_ref"
+  ],
+  "title": "Incident",
+  "type": "object"
+}

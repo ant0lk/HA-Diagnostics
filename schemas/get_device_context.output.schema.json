@@ -1,0 +1,462 @@
+{
+  "$defs": {
+    "CoverageOutput": {
+      "additionalProperties": false,
+      "properties": {
+        "source_id": {
+          "anyOf": [
+            {
+              "maxLength": 120,
+              "minLength": 1,
+              "pattern": "^[a-zA-Z0-9_:-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Id"
+        },
+        "from": {
+          "maxLength": 40,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "title": "From",
+          "type": "string"
+        },
+        "to": {
+          "maxLength": 40,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "title": "To",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "complete",
+            "partial",
+            "unknown",
+            "unavailable"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "gaps": {
+          "items": {
+            "$ref": "#/$defs/GapOutput"
+          },
+          "maxItems": 10000,
+          "title": "Gaps",
+          "type": "array"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "maxLength": 100,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        }
+      },
+      "required": [
+        "from",
+        "to",
+        "status"
+      ],
+      "title": "CoverageOutput",
+      "type": "object"
+    },
+    "DeviceContextData": {
+      "additionalProperties": false,
+      "properties": {
+        "device_ref": {
+          "maxLength": 120,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_:-]+$",
+          "title": "Device Ref",
+          "type": "string"
+        },
+        "entity_refs": {
+          "items": {
+            "maxLength": 120,
+            "minLength": 1,
+            "pattern": "^[a-zA-Z0-9_:-]+$",
+            "type": "string"
+          },
+          "maxItems": 1000,
+          "title": "Entity Refs",
+          "type": "array"
+        },
+        "integration_ref": {
+          "anyOf": [
+            {
+              "maxLength": 120,
+              "minLength": 1,
+              "pattern": "^[a-zA-Z0-9_:-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Integration Ref"
+        },
+        "mapping_origin": {
+          "anyOf": [
+            {
+              "maxLength": 100,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mapping Origin"
+        },
+        "mapping_confidence": {
+          "anyOf": [
+            {
+              "maxLength": 4000,
+              "type": "string"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mapping Confidence"
+        },
+        "observed_at": {
+          "anyOf": [
+            {
+              "maxLength": 40,
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Observed At"
+        },
+        "related_source_ids": {
+          "items": {
+            "maxLength": 120,
+            "minLength": 1,
+            "pattern": "^[a-zA-Z0-9_:-]+$",
+            "type": "string"
+          },
+          "maxItems": 200,
+          "title": "Related Source Ids",
+          "type": "array"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "maxLength": 400,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "snapshot_id": {
+          "anyOf": [
+            {
+              "maxLength": 120,
+              "minLength": 1,
+              "pattern": "^[a-zA-Z0-9_:-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Snapshot Id"
+        },
+        "states": {
+          "items": {
+            "$ref": "#/$defs/EntitySnapshotOutput"
+          },
+          "maxItems": 1000,
+          "title": "States",
+          "type": "array"
+        },
+        "state_origin": {
+          "const": "observed_snapshot",
+          "title": "State Origin",
+          "type": "string"
+        },
+        "snapshot_is_historical_evidence": {
+          "const": false,
+          "title": "Snapshot Is Historical Evidence",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "device_ref",
+        "entity_refs",
+        "states",
+        "state_origin",
+        "snapshot_is_historical_evidence"
+      ],
+      "title": "DeviceContextData",
+      "type": "object"
+    },
+    "Empty": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Empty",
+      "type": "object"
+    },
+    "EntitySnapshotOutput": {
+      "additionalProperties": false,
+      "properties": {
+        "entity_ref": {
+          "maxLength": 120,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_:-]+$",
+          "title": "Entity Ref",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/JsonValue",
+          "default": null
+        },
+        "attributes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Attributes",
+          "type": "object"
+        },
+        "last_changed": {
+          "anyOf": [
+            {
+              "maxLength": 40,
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Changed"
+        },
+        "last_updated": {
+          "anyOf": [
+            {
+              "maxLength": 40,
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Updated"
+        },
+        "observed_at": {
+          "maxLength": 40,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "title": "Observed At",
+          "type": "string"
+        },
+        "snapshot_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_:-]+$",
+          "title": "Snapshot Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "entity_ref",
+        "observed_at",
+        "snapshot_id"
+      ],
+      "title": "EntitySnapshotOutput",
+      "type": "object"
+    },
+    "GapOutput": {
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "maxLength": 40,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "title": "From",
+          "type": "string"
+        },
+        "to": {
+          "maxLength": 40,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "title": "To",
+          "type": "string"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "enum": [
+                "complete",
+                "partial",
+                "unknown",
+                "unavailable"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Status"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "maxLength": 100,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "ingestion_basis": {
+          "anyOf": [
+            {
+              "maxLength": 120,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ingestion Basis"
+        },
+        "dropped_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Dropped Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "title": "GapOutput",
+      "type": "object"
+    },
+    "JsonValue": {}
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1",
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "request_id": {
+      "title": "Request Id",
+      "type": "string"
+    },
+    "generated_at": {
+      "title": "Generated At",
+      "type": "string"
+    },
+    "data_as_of": {
+      "title": "Data As Of",
+      "type": "string"
+    },
+    "access_policy_version": {
+      "title": "Access Policy Version",
+      "type": "integer"
+    },
+    "data": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DeviceContextData"
+        },
+        {
+          "$ref": "#/$defs/Empty"
+        }
+      ],
+      "title": "Data"
+    },
+    "coverage": {
+      "items": {
+        "$ref": "#/$defs/CoverageOutput"
+      },
+      "title": "Coverage",
+      "type": "array"
+    },
+    "warnings": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+    },
+    "truncated": {
+      "title": "Truncated",
+      "type": "boolean"
+    },
+    "next_cursor": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Next Cursor"
+    },
+    "error_code": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error Code"
+    }
+  },
+  "required": [
+    "request_id",
+    "generated_at",
+    "data_as_of",
+    "access_policy_version",
+    "data",
+    "coverage",
+    "warnings",
+    "truncated",
+    "next_cursor"
+  ],
+  "title": "DeviceContextOutput",
+  "type": "object"
+}

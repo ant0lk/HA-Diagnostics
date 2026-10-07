@@ -1,0 +1,14 @@
+# Build with the repository root as context; no image is published by this file.
+FROM python:3.13.12-slim-bookworm@sha256:a58daefb915e1e03ad48f3ca4df8832065412c5c35cacb9d39f4229184de12b6
+LABEL org.opencontainers.image.title="HA-Diagnostics personal gateway" org.opencontainers.image.version="1.0.0-alpha.1" org.opencontainers.image.source="https://github.com/ant0lk/HA-Diagnostics"
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_DISABLE_PIP_VERSION_CHECK=1 PYTHONPATH=/opt/ha/src
+WORKDIR /opt/ha
+COPY requirements.lock ./requirements.lock
+RUN python -m pip install --no-cache-dir --require-hashes -r requirements.lock
+COPY src ./src
+COPY gateway ./gateway
+RUN chmod -R a+rX /opt/ha
+USER 10004:10004
+# Uvicorn binds loopback, not the bridge interface. A TLS proxy must share its
+# network namespace; publishing this port alone does not expose the listener.
+ENTRYPOINT ["python", "/opt/ha/gateway/ha_diagnostics_gateway.py", "--data", "/data"]

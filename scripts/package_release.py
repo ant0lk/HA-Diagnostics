@@ -42,7 +42,9 @@ def stage(with_tunnel: bool = False) -> Path:
         for common in ("Dockerfile", "README.md", "DOCS.md", "CHANGELOG.md"):
             shutil.copy2(TEMPLATES / common, target / common)
         copy_tree(ROOT / "ha_diagnostics/translations", target / "translations")
-        config = TEMPLATES / ("live-profile/config.yaml" if profile == "live" else "config.yaml")
+        # Supervisor recursively discovers config.yaml files in Git repositories.
+        # Templates must not shadow the standalone apps with the same slug.
+        config = TEMPLATES / ("live-profile/config.yaml.in" if profile == "live" else "config.yaml.in")
         shutil.copy2(config, target / "config.yaml")
         app = target / "app"
         app.mkdir()

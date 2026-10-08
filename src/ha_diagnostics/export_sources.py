@@ -15,6 +15,7 @@ import httpx
 from pydantic import SecretStr
 
 from .broker import BrokerError, FixedOriginConnect, SLUG_PATTERN
+from .export_configuration import ConfigurationDocument, ConfigurationReader
 
 ORIGIN = "http://supervisor"
 WS_ORIGIN = "ws://supervisor/core/websocket"
@@ -55,11 +56,13 @@ def history_interval(start: str, end: str) -> None:
 
 
 class ExportSources:
-    def __init__(self, token: str | None, *, transport=None, websocket_connector=FixedOriginConnect):
+    def __init__(self, token: str | None, *, transport=None, websocket_connector=FixedOriginConnect,
+                 configuration_reader=None):
         self._token = SecretStr(token) if token else None
         self._client = httpx.AsyncClient(transport=transport, follow_redirects=False,
             trust_env=False, timeout=httpx.Timeout(60, connect=5))
         self._ws_connector = websocket_connector
+        self._configuration_reader = configuration_reader or ConfigurationReader()
 
     @property
     def available(self) -> bool:
@@ -149,6 +152,10 @@ class ExportSources:
             raise BrokerError("OPERATION_DENIED")
         return await self._json("/core/api/diagnostics/config_entry/" + entry_id)
 
+    async def configurations(self):
+        self._headers()  # Never read the live mount in import-only mode.
+        return await asyncio.to_thread(self._configuration_reader.collect)
+
     async def history(self, kind: str, start: str, end: str):
         if kind not in {"history", "logbook"}:
             raise BrokerError("OPERATION_DENIED")
@@ -220,13 +227,28 @@ class DemoExportSources:
             return {"addons": [{"slug": "fixture_matter", "name": "Demo Matter", "installed": True}]}
         if label == "home_assistant/states":
             return [{"entity_id": "sensor.demo", "state": "unavailable", "attributes": {"unit_of_measurement": "W"}}]
-        return {"demo": True, "version": "fixture", "time_zone": "Asia/Tomsk"}
+        return {"demo": True, "version": "fixture", "time_zone": "Asia/Tomsk",
+                "components": ["demo", "automation", "recorder"]}
 
     async def registry(self, label):
         return [{"entity_id": "sensor.demo", "platform": "demo"}] if label == "entities" else []
 
     async def addon(self, slug, kind):
-        return {"slug": slug, "state": "started", "demo": True}
+        return {"slug": slug, "state": "started", "demo": True, "boot": "auto",
+                "watchdog": True, "network": {"5580/tcp": 5580},
+                "options": {"log_level": "info", "enable_feature": False, "password": "demo-hidden"},
+                "schema": {"log_level": "str", "enable_feature": "bool", "password": "password"}}
+
+    async def configurations(self):
+        return [ConfigurationDocument("configuration/home_assistant/yaml/001", "configuration.yaml",
+                {"source_path": "configuration.yaml", "demo": True,
+                 "configuration": {"default_config": None, "recorder": {"purge_keep_days": 10},
+                    "automation": {"yaml_tag": "!include", "value": "automations.yaml"}}}),
+                ConfigurationDocument("configuration/integrations/entries", ".storage/core.config_entries",
+                {"source_path": ".storage/core.config_entries", "demo": True, "configuration": {"entries": [
+                    {"entry_id": "01JABCDEFGHJKMNPQRSTVWXYZ1", "domain": "demo", "source": "user",
+                     "data": {"host": "demo-host", "password": "demo-hidden"},
+                     "options": {"scan_interval": 30, "enabled": False}}]}})]
 
     async def integration(self, entry_id):
         return {"demo": True}

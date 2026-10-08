@@ -35,6 +35,15 @@ EXCLUDED_KEYS = {"options", "schema", "latitude", "longitude", "gps", "location"
                  "config_dir", "external_url", "internal_url", "data_path"}
 PEM_BEGIN = re.compile(r"-----BEGIN [^-]*(?:PRIVATE KEY|CERTIFICATE)-----")
 PEM_END = re.compile(r"-----END [^-]+-----")
+CONFIG_SECRET_KEY = re.compile(r"(?:password|passwd|secret|token|api[_-]?key|credential|cookie|authorization|"
+    r"pairing[_-]?code|setup[_-]?code|pin[_-]?code|qr[_-]?code|bindkey|linkkey|network[_-]?key|"
+    r"private[_-]?key|encryption[_-]?key|auth[_-]?key|certfile|keyfile|certificate|"
+    r"^(?:key|psk|pin|code|pass|auth|authentication|username|user|login)$)", re.I)
+ADDON_CONFIG_FIELDS = {"slug", "name", "version", "state", "options", "schema", "network", "host_network",
+    "network_description", "boot", "boot_config", "startup", "auto_update", "watchdog", "protected",
+    "ingress", "ingress_port", "ingress_panel", "audio_input", "audio_output", "devices", "uart", "usb",
+    "gpio", "video", "apparmor", "privileged", "full_access", "hassio_api", "hassio_role", "homeassistant_api",
+    "services_role", "system_managed", "system_managed_config_entry", "webui", "url"}
 
 
 def now_utc() -> str:
@@ -55,11 +64,11 @@ class ExportArgs(EmptyExportArgs):
 
 
 class ExportSanitizer:
-    """Keep diagnostic fields while excluding settings and known secrets.
+    """Keep diagnostic fields and redact configuration before writing it.
 
     Native registry IDs are retained for joins; human labels, network addresses
     and entity IDs use the existing stable local pseudonyms. No keys are copied
-    from /config, .storage, the Recorder database or this app's credential files.
+    from authentication stores, the Recorder database or this app's private files.
     """
     def __init__(self, redactor: Redactor, scrub_known_secret):
         self.redactor = redactor
@@ -68,9 +77,50 @@ class ExportSanitizer:
     def text(self, value: str) -> str:
         return self.redactor.clean_text(self.scrub_known_secret(value), max_chars=None)
 
-    def json(self, value):
+    @staticmethod
+    def _secret_schema(descriptor):
+        return isinstance(descriptor, str) and bool(re.search(r"password|secret|token|credential", descriptor, re.I))
+
+    def json(self, value, *, configuration=False):
         count = 0
-        def walk(item, depth=0):
+        # Secret-typed addon options may have arbitrary names. Collect their
+        # values first so repeated copies inside descriptions are also removed.
+        secrets_found = set()
+        inspected = 0
+        def inspect(item, descriptor=None, depth=0, sensitive=False):
+            nonlocal inspected
+            inspected += 1
+            if depth > 64 or inspected > 1_000_000:
+                raise BrokerError("UPSTREAM_LIMIT")
+            sensitive = sensitive or self._secret_schema(descriptor)
+            if isinstance(item, str) and sensitive and item:
+                secrets_found.add(item)
+                if len(secrets_found) > 1024:
+                    raise BrokerError("UPSTREAM_LIMIT")
+            elif isinstance(item, list):
+                child_schema = descriptor[0] if isinstance(descriptor, list) and descriptor else None
+                for child in item:
+                    inspect(child, child_schema, depth + 1, sensitive)
+            elif isinstance(item, dict):
+                for key, raw in item.items():
+                    if not isinstance(key, str):
+                        raise BrokerError("UPSTREAM_FORMAT")
+                    if key == "schema":
+                        continue
+                    child_schema = descriptor.get(key) if isinstance(descriptor, dict) else None
+                    if key == "options" and isinstance(item.get("schema"), (dict, list)):
+                        child_schema = item["schema"]
+                    inspect(raw, child_schema, depth + 1, sensitive or bool(CONFIG_SECRET_KEY.search(key)))
+        if configuration:
+            inspect(value)
+        replacements = sorted((v for v in secrets_found if len(v) >= 4), key=len, reverse=True)
+        def clean(text):
+            if text in secrets_found:
+                return "[REDACTED]"
+            for secret in replacements:
+                text = text.replace(secret, "[REDACTED]")
+            return self.text(text)
+        def walk(item, depth=0, descriptor=None, schema_only=False):
             nonlocal count
             count += 1
             if depth > 64 or count > 1_000_000:
@@ -78,26 +128,36 @@ class ExportSanitizer:
             if item is None or isinstance(item, (bool, int, float)):
                 return item
             if isinstance(item, str):
-                return self.text(item)
+                return clean(item)
             if isinstance(item, list):
-                return [walk(v, depth + 1) for v in item]
+                child_schema = descriptor[0] if isinstance(descriptor, list) and descriptor else None
+                return [walk(v, depth + 1, child_schema, schema_only) for v in item]
             if isinstance(item, dict):
                 result = {}
                 for key, raw in item.items():
                     if not isinstance(key, str) or len(key) > 200:
                         raise BrokerError("UPSTREAM_FORMAT")
                     safe_key = self.text(key)
-                    if SECRET_KEY.search(key) or key.lower() in EXCLUDED_KEYS:
+                    child_schema = descriptor.get(key) if isinstance(descriptor, dict) else None
+                    excluded = key.lower() in EXCLUDED_KEYS and not (configuration and key.lower() in
+                        {"options", "schema", "config_dir", "data_path", "external_url", "internal_url"})
+                    if not schema_only and (SECRET_KEY.search(key) or excluded or
+                            configuration and (CONFIG_SECRET_KEY.search(key) or self._secret_schema(child_schema))):
                         result[safe_key] = "[REDACTED]"
+                    elif configuration and key == "schema":
+                        result[safe_key] = walk(raw, depth + 1, schema_only=True)
                     elif key in {"id", "device_id", "entry_id", "config_entry_id"}:
                         # A device's registry id and entity.device_id must join.
                         result[safe_key] = walk(raw, depth + 1)
-                    elif IDENTIFIER_KEY.fullmatch(key) and isinstance(raw, str) and raw:
+                    elif not schema_only and (IDENTIFIER_KEY.fullmatch(key) or
+                            configuration and key in {"title", "alias"}) and isinstance(raw, str) and raw:
                         kind = "ENTITY" if key == "entity_id" else "IDENTIFIER"
                         # Addresses inside strings are normalized by Redactor.
-                        result[safe_key] = self.text(raw) if key in {"ip", "ip_address", "mac", "mac_address", "address"} else self.redactor.alias(kind, raw)
+                        result[safe_key] = clean(raw) if key in {"ip", "ip_address", "mac", "mac_address", "address"} else self.redactor.alias(kind, raw)
                     else:
-                        result[safe_key] = walk(raw, depth + 1)
+                        if configuration and key == "options" and isinstance(item.get("schema"), (dict, list)):
+                            child_schema = item["schema"]
+                        result[safe_key] = walk(raw, depth + 1, child_schema, schema_only)
                 return result
             raise BrokerError("UPSTREAM_FORMAT")
         return walk(value)
@@ -394,18 +454,21 @@ class ExportService:
         self._total_bytes += len(body)
         self._bytes_since_disk_check += len(body)
 
-    async def _json_source(self, archive, job, records, label, read, *, interval=None):
+    async def _json_source(self, archive, job, records, label, read, *, interval=None,
+                           configuration=False, origin=None):
         job["current_source"] = label
         record = {"source": label, "file": label + ".json", "status": "ok",
                   "observed_at": now_utc(), "bytes": 0, "sha256": None}
         if interval:
             record.update(interval)
             record["coverage"] = "recorder_retention_and_exclusions_unknown"
+        if origin:
+            record["origin"] = self.sanitizer.text(origin)
         raw = None
         try:
             self._disk_check()
             raw = await read()
-            safe = self.sanitizer.json(raw)
+            safe = self.sanitizer.json(raw, configuration=configuration)
             body = (json.dumps(safe, ensure_ascii=False, allow_nan=False, indent=2) + "\n").encode()
             if len(body) > self.max_source_bytes:
                 raise BrokerError("SOURCE_SIZE_LIMIT")
@@ -424,6 +487,45 @@ class ExportService:
         job["issues"] += int(record["status"] != "ok")
         await asyncio.sleep(0)
         return raw if record["status"] == "ok" else None
+
+    async def _configuration_sources(self, archive, job, records, slugs):
+        try:
+            documents = await self.sources.configurations()
+        except BrokerError as error:
+            from .export_configuration import ConfigurationDocument
+            documents = [ConfigurationDocument("configuration/home_assistant/files", "/homeassistant",
+                                               error=error.code)]
+        for document in documents:
+            async def read(document=document):
+                if document.error:
+                    raise BrokerError(document.error)
+                return document.value
+            await self._json_source(archive, job, records, document.label, read,
+                                    configuration=True, origin="homeassistant_config:" + document.origin)
+        async def index():
+            return {"schema_version": 1, "scope": "saved_configuration_at_collection_time",
+                "sources": [dict(r) for r in records if r["source"].startswith("configuration/")],
+                "installed_addons": slugs,
+                "saved_file_selection": {"yaml_entrypoint": "configuration.yaml",
+                    "optional_yaml": ["automations.yaml", "scripts.yaml", "scenes.yaml", "customize.yaml", "ui-lovelace.yaml"],
+                    "storage": ["core.config_entries", "core.config", "lovelace", "lovelace_dashboards",
+                        "input_boolean", "input_number", "input_select", "input_text", "input_datetime", "counter",
+                        "timer", "schedule", "zone", "person"],
+                    "file_bytes_limit": 4 * 1024 * 1024, "total_bytes_limit": 32 * 1024 * 1024,
+                    "file_count_limit": 256},
+                "home_assistant_overview": {"runtime_configuration": "home_assistant/config.json",
+                    "core": "system/core.json", "supervisor": "system/supervisor.json", "os": "system/os.json",
+                    "network": "system/network.json", "states": "home_assistant/states.json",
+                    "devices": "registries/devices.json", "entities": "registries/entities.json",
+                    "integration_status": "registries/integrations.json"},
+                "notes": ["Saved files can differ from settings currently loaded by Home Assistant.",
+                    "YAML includes are separate documents; secret/env tags and templates are not evaluated.",
+                    "Missing optional helper/dashboard stores mean no saved store was found.",
+                    "Integration data/options come from the saved core.config_entries store, not diagnostics support.",
+                    "Addon settings come from Supervisor info; private addon files and external includes are not read.",
+                    "Empty addon options may mean no settings or upstream redaction; completeness is not asserted.",
+                    "Authentication stores, secrets.yaml, databases, certificates and media are excluded."]}
+        await self._json_source(archive, job, records, "configuration/index", index, configuration=True)
 
     async def _log_source(self, archive, job, records, source):
         label = "logs/" + source.replace(":", "/")
@@ -512,8 +614,16 @@ class ExportService:
                     and a["slug"] != "self" and a.get("installed", True)})
                 for slug in slugs:
                     for kind in ("info", "stats"):
-                        await self._json_source(archive, job, records, f"addons/{slug}/{kind}",
+                        raw = await self._json_source(archive, job, records, f"addons/{slug}/{kind}",
                             lambda slug=slug, kind=kind: self.sources.addon(slug, kind))
+                        if kind == "info":
+                            async def addon_configuration(raw=raw):
+                                if not isinstance(raw, dict):
+                                    raise BrokerError("ADDON_CONFIGURATION_UNAVAILABLE")
+                                return {key: value for key, value in raw.items() if key in ADDON_CONFIG_FIELDS}
+                            await self._json_source(archive, job, records, f"configuration/addons/{slug}",
+                                addon_configuration, configuration=True, origin=f"supervisor:/addons/{slug}/info")
+                await self._configuration_sources(archive, job, records, slugs)
                 for entry in integrations or []:
                     entry_id = entry.get("entry_id") if isinstance(entry, dict) else None
                     if isinstance(entry_id, str) and re.fullmatch(ENTRY_ID_PATTERN, entry_id):
@@ -547,7 +657,8 @@ class ExportService:
                     "notes": ["This is a diagnostic bundle, not a Home Assistant backup.",
                         "Snapshots were read at different times; the bundle is not an atomic snapshot.",
                         "Purged logs and Recorder exclusions cannot be recovered.",
-                        "No /config files, .storage, credentials, database or media are copied.",
+                        "Configuration contains sanitized parsed YAML and selected saved UI/integration settings.",
+                        "No raw files, authentication stores, secrets.yaml, databases or media are copied.",
                         "Known secrets are removed; review the ZIP before sharing."]}
                 archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
                 archive.writestr("README.txt", self._readme(manifest))
@@ -608,11 +719,14 @@ class ExportService:
             + f"Название архива: {manifest['archive_filename']}\n"
             + f"Сбор: {'автоматический по расписанию' if manifest['kind'] == 'automatic' else 'ручной'}.\n"
             + "Логи: все записи, сохранённые и доступные через Supervisor на момент чтения.\n"
+            + "configuration/: настройки HA, YAML и подключённые файлы, data/options интеграций, опции дополнений.\n"
+            + "configuration/index.json: источники настроек, пути, результаты чтения и ограничения.\n"
             + "manifest.json содержит интервалы, результаты чтений, размеры и SHA-256 файлов.\n"
             + f"{STRUCTURE_FILE} содержит название ZIP и полное дерево его папок и файлов.\n"
             + f"Недоступных или частично собранных источников: {len(issues)}.\n"
             + "Данные Recorder могут отсутствовать из-за исключений или удаления истории.\n"
-            + "Архив не является резервной копией HA. Конфигурационные файлы, базы и секреты не копируются.\n"
+            + "Сохранённая конфигурация может отличаться от загруженной в HA; шаблоны и !secret не вычисляются.\n"
+            + "Архив не является резервной копией HA. Сырые файлы, auth-хранилища, базы и secrets.yaml не копируются.\n"
             + "Распознаваемые секреты удалены; проверьте содержимое перед передачей другим людям.\n\n"
             + "\n".join(f"{s['source']}: {s['status']} ({s.get('reason', '')})" for s in issues) + "\n")
 

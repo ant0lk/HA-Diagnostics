@@ -13,6 +13,7 @@ import pytest
 
 from ha_diagnostics.broker import BrokerError
 from ha_diagnostics.export_sources import ALL_LOG_ENTRIES, DemoExportSources, ExportSources
+from ha_diagnostics.export_configuration import ConfigurationReader
 from ha_diagnostics.exporter import ExportArgs, ExportService, StartExportArgs, STRUCTURE_FILE
 from ha_diagnostics.ipc import AdminIPCServer, IPCError
 from ha_diagnostics.redaction import Redactor
@@ -54,7 +55,7 @@ class RegistryWS:
         return json.dumps({"id": 1, "type": "result", "success": True, "result": rows})
 
 
-def sources_fixture(*, fail_supervisor=False, many_lines=False):
+def sources_fixture(*, fail_supervisor=False, many_lines=False, configuration_root=None):
     requests, sockets = [], []
     def handler(request):
         requests.append(request)
@@ -82,13 +83,18 @@ def sources_fixture(*, fail_supervisor=False, many_lines=False):
             return httpx.Response(200, json=[{"entity_id": "sensor.fixture", "message": "unavailable"}])
         if path.startswith("/addons/"):
             return httpx.Response(200, json={"result": "ok", "data": {
-                "state": "started", "options": {"custom_field": "ZIP_OPTION_CANARY"}, "enabled": False}})
+                "state": "started", "options": {"custom_field": "ZIP_OPTION_CANARY", "log_level": "info",
+                    "flag": False, "offset": -7, "count": 0, "empty": ""},
+                "schema": {"custom_field": "password", "log_level": "str"},
+                "boot": "auto", "watchdog": False, "network": {"5580/tcp": 5580}, "enabled": False}})
         return httpx.Response(200, json={"version": "fixture", "time_zone": "Asia/Tomsk", "temperature": -7,
             "flag": False, "count": 0, "empty": "", "password": "ZIP_PASSWORD_CANARY", "token": TOKEN})
     def ws(*args, **kwargs):
         assert args[0] == "ws://supervisor/core/websocket"
         socket = RegistryWS();sockets.append(socket);return socket
-    return ExportSources(TOKEN, transport=httpx.MockTransport(handler), websocket_connector=ws), requests, sockets
+    reader = ConfigurationReader(configuration_root) if configuration_root else None
+    return ExportSources(TOKEN, transport=httpx.MockTransport(handler), websocket_connector=ws,
+                         configuration_reader=reader), requests, sockets
 
 
 async def finish(service):
@@ -100,7 +106,13 @@ async def finish(service):
 
 
 async def test_complete_zip_contains_all_sources_24h_history_checksums_and_no_secrets(tmp_path):
-    sources, requests, sockets = sources_fixture(fail_supervisor=True, many_lines=True)
+    root = tmp_path / "homeassistant"
+    (root / ".storage").mkdir(parents=True)
+    (root / "configuration.yaml").write_text("default_config: {}\nrecorder:\n  purge_keep_days: 10\n")
+    (root / ".storage/core.config_entries").write_text(json.dumps({"version": 1, "data": {"entries": [
+        {"entry_id": ENTRY_ID, "domain": "matter", "data": {"password": TOKEN},
+         "options": {"scan_interval": 30, "enabled": False}}]}}))
+    sources, requests, sockets = sources_fixture(fail_supervisor=True, many_lines=True, configuration_root=root)
     service = ExportService(tmp_path / "exports", sources, Redactor(b"r" * 32), min_free_bytes=0)
     try:
         job, path = await finish(service)
@@ -141,6 +153,16 @@ async def test_complete_zip_contains_all_sources_24h_history_checksums_and_no_se
             assert datetime.fromisoformat(b) - datetime.fromisoformat(a) == timedelta(hours=24)
             assert manifest["history"]["coverage"] == "recorder_retention_and_exclusions_unknown"
             assert f"integrations/{ENTRY_ID}.json" in names
+            addon = json.loads(archive.read("configuration/addons/fixture_matter.json"))
+            assert addon["options"] == {"custom_field": "[REDACTED]", "log_level": "info",
+                "flag": False, "offset": -7, "count": 0, "empty": ""}
+            assert addon["boot"] == "auto" and addon["watchdog"] is False
+            assert addon["network"] == {"5580/tcp": 5580}
+            entries = json.loads(archive.read("configuration/integrations/entries.json"))["configuration"]["entries"]
+            assert entries[0]["entry_id"] == ENTRY_ID
+            assert entries[0]["options"] == {"scan_interval": 30, "enabled": False}
+            assert entries[0]["data"]["password"] == "[REDACTED]"
+            assert "configuration/index.json" in names
             devices = json.loads(archive.read("registries/devices.json"))
             entities = json.loads(archive.read("registries/entities.json"))
             assert devices[0]["id"] == entities[0]["device_id"]
@@ -355,7 +377,7 @@ def test_zip_bootstrap_runs_only_export_and_ui_with_token_fd_separated(tmp_path,
 
 def test_published_zip_sources_and_ui_match_main_sources():
     root = Path(__file__).resolve().parents[1]
-    for name in ("runtime.py", "ui.py", "ipc.py", "exporter.py", "export_sources.py", "export_schedule.py"):
+    for name in ("runtime.py", "ui.py", "ipc.py", "exporter.py", "export_sources.py", "export_schedule.py", "export_configuration.py"):
         assert (root / "src/ha_diagnostics" / name).read_bytes() == (
             root / "ha_diagnostics_live/app/src/ha_diagnostics" / name).read_bytes(), name
     for name in ("index.html", "app.js", "style.css"):

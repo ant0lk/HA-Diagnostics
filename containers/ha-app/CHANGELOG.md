@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## 1.0.0-alpha.4 — 2026-10-08
+
+Live ZIP includes sanitized HA YAML/includes, saved UI/helper settings, integration data/options and Supervisor addon settings. `configuration/index.json` records origins and gaps. Home Assistant config is mounted read-only; secrets/env tags are not evaluated and secret fields/password schema options are redacted before writing. File/path/size limits are enforced. Daily scheduling and 7 automatic / 3 manual archive retention remain. Private addon files and live HA OS acceptance are outside local verification.
+
 ## 1.0.0-alpha.3 — 2026-10-08
 
 Ежедневные автоархивы включены по умолчанию: сбор в 03:00 по часовому поясу Home Assistant. В панели можно изменить время или отключить расписание без перезапуска; настройки и отметки запусков сохраняются. Автосбор работает при закрытой панели, пропущенный сегодняшний запуск догоняется после запуска дополнения. Хранятся отдельно последние 7 автоматических и 3 ручных ZIP без прежнего удаления через 24 часа. Старые ZIP Alpha 2 распознаются как ручные. В каждый новый архив добавлен `ARCHIVE_STRUCTURE.txt` с названием ZIP и полным деревом фактического содержимого; manifest включает тип сбора и SHA-256 файла структуры.

@@ -1,7 +1,7 @@
 name: HA-Diagnostics — ZIP diagnostics
-version: 1.0.0-alpha.3
+version: 1.0.0-alpha.4
 slug: ha_diagnostics_live
-description: Скачать ZIP с доступными логами, диагностикой и историей Home Assistant за 24 часа.
+description: ZIP с конфигурацией, журналами и диагностикой Home Assistant; история за 24 часа.
 url: https://github.com/ant0lk/HA-Diagnostics
 arch: [amd64, aarch64]
 homeassistant: "2026.9.4"
@@ -26,7 +26,10 @@ host_ipc: false
 host_dbus: false
 apparmor: true
 tmpfs: true
-map: []
+map:
+  - type: homeassistant_config
+    read_only: true
+    path: /homeassistant
 ports: {}
 backup: cold
 backup_exclude: ["private", "private/*", "public", "public/*", "query", "query/*", "transport", "transport/*", "ipc", "ipc/*", "exports", "exports/*", "options.json"]

@@ -1,0 +1,41 @@
+{
+  "product_version": "1.0.0-alpha.4",
+  "date": "2026-10-08",
+  "pytest": {
+    "tests": 303,
+    "errors": 0,
+    "failures": 0,
+    "skipped": 2,
+    "passed": 301,
+    "junit_sha256": "aad2bf78f533c7f1b7c7954bb74296ac46f7b03f0f78cf44d30ed5e9ddbe5796"
+  },
+  "live_build_context": {
+    "source_web_schema_requirement_parity": true,
+    "sha256_files_verified": 70
+  },
+  "configuration_checks": [
+    "HA YAML/includes/packages",
+    "saved integration data/options",
+    "Supervisor addon options/schema/network/boot/watchdog",
+    "helpers and dashboards",
+    "field/schema secret redaction before ZIP",
+    "false/zero/negative/empty/whitespace values",
+    "config sources/index and SHA-256",
+    "no writes to HA fixtures",
+    "path/hardlink/size/alias/depth limits",
+    "safe source gaps and import-only denial"
+  ],
+  "browser_panel": {
+    "mode": "local_demo",
+    "rendered_version": "1.0.0-alpha.4",
+    "configuration_card_and_four_card_layout_verified": true
+  },
+  "unverified": [
+    "HA OS readonly mount and export worker file permissions",
+    "Linux reader dirfd traversal on target HA OS",
+    "real Supervisor/Core reads",
+    "real Ingress and large ZIP download",
+    "container build/run on amd64/aarch64"
+  ],
+  "git_commit_or_push_performed": false
+}

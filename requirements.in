@@ -4,4 +4,5 @@ websockets==16.0
 PyJWT==2.10.1
 cryptography==46.0.5
 tzdata==2026.2
+PyYAML==6.0.3
 pywin32==312 ; sys_platform == "win32"

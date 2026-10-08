@@ -1,8 +1,10 @@
-# Установка HA-Diagnostics 1.0.0-alpha.3
+# Установка HA-Diagnostics 1.0.0-alpha.4
 
 ## Основной сценарий: ZIP
 
-Для скачивания диагностического архива используйте дополнение `ha_diagnostics_live/` (HA-Diagnostics — ZIP diagnostics). Slug сохранён, версия — `1.0.0-alpha.3`. Укажите `ingress_admin_id` администратора в конфигурации дополнения, запустите его, откройте веб-интерфейс и нажмите «Собрать ZIP-архив», затем «Скачать ZIP». История и события — последние 24 часа, логи — весь доступный сохранённый период. Protected mode должен оставаться включённым. Автосбор включён по умолчанию в 03:00 по поясу HA; время и включение меняются в панели. Хранятся последние 7 автоархивов и 3 ручных ZIP.
+Для скачивания диагностического архива используйте дополнение `ha_diagnostics_live/` (HA-Diagnostics — ZIP diagnostics). Slug сохранён, версия — `1.0.0-alpha.4`. Укажите `ingress_admin_id` администратора в конфигурации дополнения, запустите его, откройте веб-интерфейс и нажмите «Собрать ZIP-архив», затем «Скачать ZIP». История и события — последние 24 часа, логи — весь доступный сохранённый период. Protected mode должен оставаться включённым. Автосбор включён по умолчанию в 03:00 по поясу HA; время и включение меняются в панели. Хранятся последние 7 автоархивов и 3 ручных ZIP.
+
+Alpha 4 добавляет mount конфигурации HA в `/homeassistant` только для чтения. После обновления дополнения проверьте `configuration/index.json`: должны читаться YAML и `.storage/core.config_entries`; options/schema дополнений берутся из Supervisor info. Если файлы недоступны по правам, архив укажет `CONFIG_PERMISSION_DENIED`, остальные источники сохранятся. Установка на стенде должна подтвердить readonly mount; приложение не изменяет права или настройки HA. Подробный состав: [ZIP_EXPORT](ZIP_EXPORT.md).
 
 MCP, OAuth, Tunnel и HTTPS relay для ZIP не настраиваются и не запускаются. Состав, очистка, пределы и отчёт о пробелах описаны в [ZIP_EXPORT.md](ZIP_EXPORT.md). На HA OS необходимо проверить обновление установленного дополнения, Ingress, доступность реальных API и скачивание.
 
@@ -31,8 +33,8 @@ Tunnel archives в `containers/vendor/` не включаются в Git. Есл
 На Linux Docker builder (в этой Windows среде Docker не обнаружен):
 
 ```sh
-docker buildx build --platform linux/amd64 --build-arg BUILD_ARCH=amd64 --load -t ha-diagnostics-import:1.0.0-alpha.3 dist/ha-addons/ha_diagnostics
-docker buildx build --platform linux/amd64 --build-arg BUILD_ARCH=amd64 --load -t ha-diagnostics-live:1.0.0-alpha.3 dist/ha-addons/ha_diagnostics_live
+docker buildx build --platform linux/amd64 --build-arg BUILD_ARCH=amd64 --load -t ha-diagnostics-import:1.0.0-alpha.4 dist/ha-addons/ha_diagnostics
+docker buildx build --platform linux/amd64 --build-arg BUILD_ARCH=amd64 --load -t ha-diagnostics-live:1.0.0-alpha.4 dist/ha-addons/ha_diagnostics_live
 ```
 
 Повторите build для linux/arm64 на соответствующем runner. Ничего не push. Перед live release сохраните `docker image inspect` digest, image SBOM, vulnerability scan и actual runtime результаты. `build.yaml` отсутствует согласно текущему HA packaging; зависимости копируются внутрь staged app context.
@@ -50,7 +52,7 @@ docker buildx build --platform linux/amd64 --build-arg BUILD_ARCH=amd64 --load -
 5. `HA-Diagnostics — Live alpha` — отдельное приложение с broad manager token у broker. Установку используйте для контролируемого испытания, затем выберите конечный список реально обнаруженных источников и разрешённых диагностических сущностей. «Все допустимые» означает сохранить перечисленный локальный набор, не wildcard API-доступ. Camera/media/person/geolocation в MCP не включаются.
 6. Сверьте чтение Core/Supervisor/addon/Recorder с эталоном, проверьте /proc/env/IPC негативные проверки прежде, чем разрешать удалённое чтение. При провале границы прекратите live profile; import продолжает работать.
 
-Standalone `Dockerfile.import` вне Supervisor нужен, если HA credential не должен выдаваться даже bootstrap. Его можно собрать локально с тегом `ha-diagnostics-import:1.0.0-alpha.3`; по умолчанию он не публикует порт и не имеет сессии HA Ingress. Для панели нужен отдельный проверенный локальный admin/development доступ — это не HA Container live поддержка.
+Standalone `Dockerfile.import` вне Supervisor нужен, если HA credential не должен выдаваться даже bootstrap. Его можно собрать локально с тегом `ha-diagnostics-import:1.0.0-alpha.4`; по умолчанию он не публикует порт и не имеет сессии HA Ingress. Для панели нужен отдельный проверенный локальный admin/development доступ — это не HA Container live поддержка.
 
 ## 3. OAuth и безопасная локальная настройка
 
@@ -118,4 +120,4 @@ python scripts/package_plugin.py --registered-server-id ВАШ_РЕАЛЬНЫЙ_
 
 В локальной панели выключите удалённый доступ/owner binding и выбранные источники или imports. Следующий вызов должен быть запрещён, active выдача отменена по критерию ≤5s. Это kill switch; удаление плагина в ChatGPT не заменяет его. Затем отзовите refresh/session в IdP и runtime transport key в Platform/личном gateway, остановите транспорт. История сборщика может продолжаться при паузе удалённого доступа; остановка сбора отдельна.
 
-При обновлении сохраняйте версию `1.0.0-alpha.3` до отдельного указания. Повторяйте lock/hash/negative tests и runbook; source package не содержит state. Для отката используйте предыдущий проверенный image digest и совместимую копию своего очищенного архива/политики. Backup defaults исключают архив и secrets; автоматическое восстановление credentials не обещается. Локальное удаление не удаляет уже переданные ответы в ChatGPT или резервные копии других систем.
+При обновлении сохраняйте версию `1.0.0-alpha.4` до отдельного указания. Повторяйте lock/hash/negative tests и runbook; source package не содержит state. Для отката используйте предыдущий проверенный image digest и совместимую копию своего очищенного архива/политики. Backup defaults исключают архив и secrets; автоматическое восстановление credentials не обещается. Локальное удаление не удаляет уже переданные ответы в ChatGPT или резервные копии других систем.

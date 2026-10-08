@@ -1,0 +1,161 @@
+{
+  "$defs": {
+    "OAuthConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "issuer": {
+          "default": "",
+          "title": "Issuer",
+          "type": "string"
+        },
+        "resource": {
+          "default": "",
+          "title": "Resource",
+          "type": "string"
+        },
+        "jwks_uri": {
+          "default": "",
+          "title": "Jwks Uri",
+          "type": "string"
+        },
+        "introspection_uri": {
+          "default": "",
+          "title": "Introspection Uri",
+          "type": "string"
+        },
+        "client_id": {
+          "default": "",
+          "title": "Client Id",
+          "type": "string"
+        }
+      },
+      "title": "OAuthConfig",
+      "type": "object"
+    },
+    "SourcePolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "source_id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_:-]+$",
+          "title": "Source Id",
+          "type": "string"
+        },
+        "collect": {
+          "default": false,
+          "title": "Collect",
+          "type": "boolean"
+        },
+        "disclose": {
+          "default": false,
+          "title": "Disclose",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "source_id"
+      ],
+      "title": "SourcePolicy",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "installation_id": {
+      "default": "local",
+      "pattern": "^[a-zA-Z0-9_-]{1,80}$",
+      "title": "Installation Id",
+      "type": "string"
+    },
+    "version": {
+      "default": 1,
+      "minimum": 1,
+      "title": "Version",
+      "type": "integer"
+    },
+    "mode": {
+      "default": "import_only",
+      "enum": [
+        "import_only",
+        "live"
+      ],
+      "title": "Mode",
+      "type": "string"
+    },
+    "timezone": {
+      "default": "UTC",
+      "title": "Timezone",
+      "type": "string"
+    },
+    "remote_enabled": {
+      "default": false,
+      "title": "Remote Enabled",
+      "type": "boolean"
+    },
+    "collection_enabled": {
+      "default": false,
+      "title": "Collection Enabled",
+      "type": "boolean"
+    },
+    "sources": {
+      "items": {
+        "$ref": "#/$defs/SourcePolicy"
+      },
+      "maxItems": 200,
+      "title": "Sources",
+      "type": "array"
+    },
+    "entity_ids": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 1000,
+      "title": "Entity Ids",
+      "type": "array"
+    },
+    "entity_refs": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 1000,
+      "title": "Entity Refs",
+      "type": "array"
+    },
+    "owner_sub": {
+      "default": "",
+      "maxLength": 300,
+      "title": "Owner Sub",
+      "type": "string"
+    },
+    "disclose_names": {
+      "default": false,
+      "title": "Disclose Names",
+      "type": "boolean"
+    },
+    "retention_days": {
+      "default": 7,
+      "maximum": 30,
+      "minimum": 1,
+      "title": "Retention Days",
+      "type": "integer"
+    },
+    "max_bytes": {
+      "default": 536870912,
+      "maximum": 536870912,
+      "minimum": 8388608,
+      "title": "Max Bytes",
+      "type": "integer"
+    },
+    "oauth": {
+      "$ref": "#/$defs/OAuthConfig"
+    }
+  },
+  "title": "LocalPolicy",
+  "type": "object"
+}

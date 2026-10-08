@@ -1,0 +1,17 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "device_ref": {
+      "maxLength": 120,
+      "minLength": 1,
+      "pattern": "^[a-zA-Z0-9_:-]+$",
+      "title": "Device Ref",
+      "type": "string"
+    }
+  },
+  "required": [
+    "device_ref"
+  ],
+  "title": "Device",
+  "type": "object"
+}

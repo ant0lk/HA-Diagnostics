@@ -1,0 +1,91 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "cursor": {
+      "anyOf": [
+        {
+          "maxLength": 2048,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cursor"
+    },
+    "from": {
+      "maxLength": 40,
+      "title": "From",
+      "type": "string"
+    },
+    "to": {
+      "maxLength": 40,
+      "title": "To",
+      "type": "string"
+    },
+    "source_ids": {
+      "items": {
+        "maxLength": 120,
+        "minLength": 1,
+        "pattern": "^[a-zA-Z0-9_:-]+$",
+        "type": "string"
+      },
+      "maxItems": 10,
+      "minItems": 1,
+      "title": "Source Ids",
+      "type": "array"
+    },
+    "levels": {
+      "anyOf": [
+        {
+          "items": {
+            "enum": [
+              "DEBUG",
+              "INFO",
+              "WARNING",
+              "ERROR",
+              "CRITICAL",
+              "UNKNOWN"
+            ],
+            "type": "string"
+          },
+          "maxItems": 6,
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Levels"
+    },
+    "query": {
+      "anyOf": [
+        {
+          "maxLength": 200,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Query"
+    },
+    "limit": {
+      "default": 200,
+      "maximum": 200,
+      "minimum": 1,
+      "title": "Limit",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "from",
+    "to",
+    "source_ids"
+  ],
+  "title": "Logs",
+  "type": "object"
+}

@@ -1,0 +1,224 @@
+{
+  "$defs": {
+    "AddonCatalogRead": {
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "const": "addon_catalog",
+          "title": "Op",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "title": "AddonCatalogRead",
+      "type": "object"
+    },
+    "BootRead": {
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "const": "boots",
+          "title": "Op",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "title": "BootRead",
+      "type": "object"
+    },
+    "DeviceCatalogRead": {
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "const": "device_catalog",
+          "title": "Op",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "title": "DeviceCatalogRead",
+      "type": "object"
+    },
+    "EntityCatalogRead": {
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "const": "entity_catalog",
+          "title": "Op",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "title": "EntityCatalogRead",
+      "type": "object"
+    },
+    "HistoryRead": {
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "const": "history",
+          "title": "Op",
+          "type": "string"
+        },
+        "entity_ids": {
+          "items": {
+            "pattern": "^[a-z][a-z0-9_]*\\.[a-z0-9_]+$",
+            "type": "string"
+          },
+          "maxItems": 20,
+          "minItems": 1,
+          "title": "Entity Ids",
+          "type": "array"
+        },
+        "from": {
+          "maxLength": 40,
+          "title": "From",
+          "type": "string"
+        },
+        "to": {
+          "maxLength": 40,
+          "title": "To",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "entity_ids",
+        "from",
+        "to"
+      ],
+      "title": "HistoryRead",
+      "type": "object"
+    },
+    "LogRead": {
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "const": "logs",
+          "title": "Op",
+          "type": "string"
+        },
+        "source_id": {
+          "maxLength": 140,
+          "minLength": 1,
+          "title": "Source Id",
+          "type": "string"
+        },
+        "lines": {
+          "default": 50000,
+          "maximum": 50000,
+          "minimum": 1000,
+          "title": "Lines",
+          "type": "integer"
+        },
+        "boot_id": {
+          "anyOf": [
+            {
+              "pattern": "^(?:0|[0-9a-f]{32})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Boot Id"
+        }
+      },
+      "required": [
+        "op",
+        "source_id"
+      ],
+      "title": "LogRead",
+      "type": "object"
+    },
+    "MetadataRead": {
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "const": "metadata",
+          "title": "Op",
+          "type": "string"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "title": "MetadataRead",
+      "type": "object"
+    },
+    "StateRead": {
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "const": "states",
+          "title": "Op",
+          "type": "string"
+        },
+        "entity_ids": {
+          "items": {
+            "pattern": "^[a-z][a-z0-9_]*\\.[a-z0-9_]+$",
+            "type": "string"
+          },
+          "maxItems": 1000,
+          "minItems": 1,
+          "title": "Entity Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "op",
+        "entity_ids"
+      ],
+      "title": "StateRead",
+      "type": "object"
+    }
+  },
+  "discriminator": {
+    "mapping": {
+      "addon_catalog": "#/$defs/AddonCatalogRead",
+      "boots": "#/$defs/BootRead",
+      "device_catalog": "#/$defs/DeviceCatalogRead",
+      "entity_catalog": "#/$defs/EntityCatalogRead",
+      "history": "#/$defs/HistoryRead",
+      "logs": "#/$defs/LogRead",
+      "metadata": "#/$defs/MetadataRead",
+      "states": "#/$defs/StateRead"
+    },
+    "propertyName": "op"
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/MetadataRead"
+    },
+    {
+      "$ref": "#/$defs/AddonCatalogRead"
+    },
+    {
+      "$ref": "#/$defs/DeviceCatalogRead"
+    },
+    {
+      "$ref": "#/$defs/EntityCatalogRead"
+    },
+    {
+      "$ref": "#/$defs/BootRead"
+    },
+    {
+      "$ref": "#/$defs/LogRead"
+    },
+    {
+      "$ref": "#/$defs/StateRead"
+    },
+    {
+      "$ref": "#/$defs/HistoryRead"
+    }
+  ]
+}

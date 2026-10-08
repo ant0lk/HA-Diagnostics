@@ -1,0 +1,9 @@
+2026-10-07T21:35:00+07:00 ERROR [fixture.integration] timeout for light.fixture
+Traceback (most recent call last):
+  File "synthetic_fixture.py", line 1, in fixture
+    raise RuntimeError("synthetic")
+RuntimeError: synthetic failure
+2026-10-07T21:35:00+07:00 ERROR [fixture.integration] timeout for light.fixture
+2026-10-07T21:35:00+07:00 ERROR [fixture.integration] timeout for light.fixture
+2026-10-07T21:36:00+07:00 WARNING [fixture.integration] password=synthetic_canary
+Timestamp-less synthetic diagnostic line.

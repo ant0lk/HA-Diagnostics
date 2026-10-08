@@ -1,0 +1,606 @@
+{
+  "$defs": {
+    "BaselineOutput": {
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "maxLength": 40,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "title": "From",
+          "type": "string"
+        },
+        "to": {
+          "maxLength": 40,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "title": "To",
+          "type": "string"
+        },
+        "coverage": {
+          "items": {
+            "$ref": "#/$defs/CoverageOutput"
+          },
+          "title": "Coverage",
+          "type": "array"
+        }
+      },
+      "required": [
+        "from",
+        "to",
+        "coverage"
+      ],
+      "title": "BaselineOutput",
+      "type": "object"
+    },
+    "CoverageOutput": {
+      "additionalProperties": false,
+      "properties": {
+        "source_id": {
+          "anyOf": [
+            {
+              "maxLength": 120,
+              "minLength": 1,
+              "pattern": "^[a-zA-Z0-9_:-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Id"
+        },
+        "from": {
+          "maxLength": 40,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "title": "From",
+          "type": "string"
+        },
+        "to": {
+          "maxLength": 40,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "title": "To",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "complete",
+            "partial",
+            "unknown",
+            "unavailable"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "gaps": {
+          "items": {
+            "$ref": "#/$defs/GapOutput"
+          },
+          "maxItems": 10000,
+          "title": "Gaps",
+          "type": "array"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "maxLength": 100,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        }
+      },
+      "required": [
+        "from",
+        "to",
+        "status"
+      ],
+      "title": "CoverageOutput",
+      "type": "object"
+    },
+    "Empty": {
+      "additionalProperties": false,
+      "properties": {},
+      "title": "Empty",
+      "type": "object"
+    },
+    "ErrorGroupOutput": {
+      "additionalProperties": false,
+      "properties": {
+        "fingerprint": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Fingerprint",
+          "type": "string"
+        },
+        "logger": {
+          "anyOf": [
+            {
+              "maxLength": 220,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Logger"
+        },
+        "level": {
+          "enum": [
+            "ERROR",
+            "CRITICAL"
+          ],
+          "title": "Level",
+          "type": "string"
+        },
+        "count": {
+          "minimum": 1,
+          "title": "Count",
+          "type": "integer"
+        },
+        "first_seen": {
+          "maxLength": 40,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "title": "First Seen",
+          "type": "string"
+        },
+        "last_seen": {
+          "maxLength": 40,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "title": "Last Seen",
+          "type": "string"
+        },
+        "examples": {
+          "items": {
+            "$ref": "#/$defs/LogOutput"
+          },
+          "maxItems": 3,
+          "title": "Examples",
+          "type": "array"
+        },
+        "baseline_count": {
+          "minimum": 0,
+          "title": "Baseline Count",
+          "type": "integer"
+        },
+        "baseline_comparison": {
+          "enum": [
+            "previously_observed",
+            "not_found_in_complete_baseline",
+            "not_found_in_available_baseline"
+          ],
+          "title": "Baseline Comparison",
+          "type": "string"
+        },
+        "fingerprint_version": {
+          "maxLength": 40,
+          "title": "Fingerprint Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "fingerprint",
+        "logger",
+        "level",
+        "count",
+        "first_seen",
+        "last_seen",
+        "examples",
+        "baseline_count",
+        "baseline_comparison",
+        "fingerprint_version"
+      ],
+      "title": "ErrorGroupOutput",
+      "type": "object"
+    },
+    "ErrorsData": {
+      "additionalProperties": false,
+      "properties": {
+        "groups": {
+          "items": {
+            "$ref": "#/$defs/ErrorGroupOutput"
+          },
+          "maxItems": 50,
+          "title": "Groups",
+          "type": "array"
+        },
+        "baseline": {
+          "$ref": "#/$defs/BaselineOutput"
+        }
+      },
+      "required": [
+        "groups",
+        "baseline"
+      ],
+      "title": "ErrorsData",
+      "type": "object"
+    },
+    "GapOutput": {
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "maxLength": 40,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "title": "From",
+          "type": "string"
+        },
+        "to": {
+          "maxLength": 40,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "title": "To",
+          "type": "string"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "enum": [
+                "complete",
+                "partial",
+                "unknown",
+                "unavailable"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Status"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "maxLength": 100,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "ingestion_basis": {
+          "anyOf": [
+            {
+              "maxLength": 120,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ingestion Basis"
+        },
+        "dropped_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Dropped Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "title": "GapOutput",
+      "type": "object"
+    },
+    "LogOutput": {
+      "additionalProperties": false,
+      "properties": {
+        "record_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_:-]+$",
+          "title": "Record Id",
+          "type": "string"
+        },
+        "source_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_:-]+$",
+          "title": "Source Id",
+          "type": "string"
+        },
+        "boot_id": {
+          "maxLength": 128,
+          "title": "Boot Id",
+          "type": "string"
+        },
+        "cursor": {
+          "anyOf": [
+            {
+              "maxLength": 300,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cursor"
+        },
+        "event_time_utc": {
+          "anyOf": [
+            {
+              "maxLength": 40,
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Event Time Utc"
+        },
+        "observed_at": {
+          "maxLength": 40,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$",
+          "title": "Observed At",
+          "type": "string"
+        },
+        "time_quality": {
+          "enum": [
+            "source_timestamp",
+            "assumed_timezone",
+            "unknown",
+            "parse_error",
+            "clock_jump"
+          ],
+          "title": "Time Quality",
+          "type": "string"
+        },
+        "source_timestamp": {
+          "anyOf": [
+            {
+              "maxLength": 120,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Timestamp"
+        },
+        "source_offset": {
+          "anyOf": [
+            {
+              "maxLength": 8,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Offset"
+        },
+        "precision": {
+          "anyOf": [
+            {
+              "enum": [
+                "unknown",
+                "second",
+                "fraction"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Precision"
+        },
+        "timestamp_origin": {
+          "anyOf": [
+            {
+              "enum": [
+                "source",
+                "absent",
+                "recorder",
+                "event",
+                "snapshot"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timestamp Origin"
+        },
+        "level": {
+          "enum": [
+            "DEBUG",
+            "INFO",
+            "WARNING",
+            "ERROR",
+            "CRITICAL",
+            "UNKNOWN"
+          ],
+          "title": "Level",
+          "type": "string"
+        },
+        "logger": {
+          "anyOf": [
+            {
+              "maxLength": 220,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Logger"
+        },
+        "sanitized_message": {
+          "maxLength": 16020,
+          "title": "Sanitized Message",
+          "type": "string"
+        },
+        "fingerprint": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Fingerprint",
+          "type": "string"
+        },
+        "occurrence": {
+          "minimum": 1,
+          "title": "Occurrence",
+          "type": "integer"
+        },
+        "redaction_version": {
+          "maxLength": 40,
+          "title": "Redaction Version",
+          "type": "string"
+        },
+        "truncated": {
+          "title": "Truncated",
+          "type": "boolean"
+        },
+        "local_locator": {
+          "maxLength": 400,
+          "title": "Local Locator",
+          "type": "string"
+        },
+        "selection_time_basis": {
+          "enum": [
+            "event",
+            "observation_only"
+          ],
+          "title": "Selection Time Basis",
+          "type": "string"
+        },
+        "evidence_kind": {
+          "anyOf": [
+            {
+              "const": "log",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Kind"
+        }
+      },
+      "required": [
+        "record_id",
+        "source_id",
+        "boot_id",
+        "event_time_utc",
+        "observed_at",
+        "time_quality",
+        "level",
+        "sanitized_message",
+        "fingerprint",
+        "occurrence",
+        "redaction_version",
+        "truncated",
+        "local_locator",
+        "selection_time_basis"
+      ],
+      "title": "LogOutput",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1",
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "request_id": {
+      "title": "Request Id",
+      "type": "string"
+    },
+    "generated_at": {
+      "title": "Generated At",
+      "type": "string"
+    },
+    "data_as_of": {
+      "title": "Data As Of",
+      "type": "string"
+    },
+    "access_policy_version": {
+      "title": "Access Policy Version",
+      "type": "integer"
+    },
+    "data": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ErrorsData"
+        },
+        {
+          "$ref": "#/$defs/Empty"
+        }
+      ],
+      "title": "Data"
+    },
+    "coverage": {
+      "items": {
+        "$ref": "#/$defs/CoverageOutput"
+      },
+      "title": "Coverage",
+      "type": "array"
+    },
+    "warnings": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+    },
+    "truncated": {
+      "title": "Truncated",
+      "type": "boolean"
+    },
+    "next_cursor": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Next Cursor"
+    },
+    "error_code": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error Code"
+    }
+  },
+  "required": [
+    "request_id",
+    "generated_at",
+    "data_as_of",
+    "access_policy_version",
+    "data",
+    "coverage",
+    "warnings",
+    "truncated",
+    "next_cursor"
+  ],
+  "title": "ErrorsOutput",
+  "type": "object"
+}

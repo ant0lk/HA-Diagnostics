@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0",
+  "client_version": "0.0.16",
+  "executable_template": "/opt/ha-diagnostics/tunnel/{arch}/tunnel-client-runtime",
+  "uid": 10004,
+  "gid": 10004,
+  "argv": ["run", "--control-plane.api-key=file:/data/transport/control-plane-api-key"],
+  "environment_allowlist": {
+    "CONTROL_PLANE_TUNNEL_ID": "LOCAL_CONFIG_REQUIRED",
+    "CONTROL_PLANE_POLL_CHANNELS": "main",
+    "CONTROL_PLANE_MAX_INFLIGHT_REQUESTS": "2",
+    "MCP_SERVER_URL": "http://127.0.0.1:8000/mcp",
+    "HEALTH_LISTEN_ADDR": "127.0.0.1:0",
+    "LOG_LEVEL": "warn",
+    "LOG_FORMAT": "json",
+    "LOG_HTTP_RAW_UNSAFE": "false",
+    "HARPOON_CAPTURE_PAYLOADS": "false"
+  },
+  "invariants": ["No inherited environment", "No HA credentials", "Only main MCP channel", "No arbitrary HTTP callout configuration", "No admin listener publication", "Never download binaries on startup"]
+}

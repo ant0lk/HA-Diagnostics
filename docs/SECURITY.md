@@ -1,0 +1,23 @@
+# Безопасность и приватность HA-Diagnostics alpha
+
+Неизменяемая граница: чтение HA и устройств. MCP принимает10 конечных диагностических tools, типизированные identifiers/time ranges и strict schemas. У него нет service calls, restart/reload/logger, registry/config updates, URL/API proxy, shell/SQL/произвольного filesystem path. Настройки собственного приложения тоже отсутствуют в MCP; владелец меняет их локально.
+
+Broker применяет отдельный allowlist метода/канонического route/params и read-only WebSocket команд. Все входные IDs связываются с текущей owner installation/local policy, OAuth scope intersected с enabled источниками и разрешёнными imports. Cursor привязан к subject, фильтрам и версии политики; смена политики не сохраняет старый доступ. readOnlyHint — metadata, не security boundary.
+
+Live broker UID10001 единственный имеет broad Supervisor manager token. Query10002, UI10003 и transport10004 получают очищенные данные/свои ограниченные credentials. Import profile не удерживает/не использует HA credential; token injection Supervisor bootstrap отдельно проверяется. Для отсутствия выдачи credential вообще предусмотрен standalone import-only контейнер вне Supervisor.
+
+App config сохраняет Protected mode/AppArmor, no host_network/host_pid/full_access/docker_api, не монтирует HA configuration, host, Docker socket, secrets/backup/media/.storage. Root нужен только bootstrap, затем uid drop/no_new_privs/dumpable restrictions и IPC permissions. **Фактическая ОС-изоляция на обоих HA OS архитектурах ещё непроверена**. Проверки /proc/env/files/sockets относятся к release gate, не заменяются исходным кодом или фикстурами Windows.
+
+Компрометация trusted broker с manager token — остаточный риск: этот credential позволяет более широкие действия upstream. Продукт не превращает его в HA read-only token и не заявляет containment произвольного кода внутри broker. Prompt injection/подделанный MCP запрос должны блокироваться до upstream независимо от модели.
+
+Секреты очищаются локально до persistent storage, FTS и передачи. Safe field allowlist дополняет regex, identifiers получают stable installation псевдонимы, owner видит preview и отдельно approves disclosure. В alpha исходные имена всегда псевдонимизируются; переключение политики имён пока не реализовано. Неизвестный секрет нельзя гарантированно распознать только правилами; исключайте рискованные источники. Import raw не сохраняется, filename не filesystem path. Logs/JSON отображаются как текст, являются недоверенными данными и не могут задавать инструкции.
+
+Передаются только bounded ответы по запросу. Выбранные очищенные данные покидают дом и поступают OpenAI, а при fallback проходят личный gateway, который их видит. Непрерывный поток не выгружается. TLS защищает канал, но не даёт обещание шифрования «до модели». Локальный revoke/delete не удаляет уже переданные ответы/backup и не задаёт retention OpenAI.
+
+OAuth tokens — HA-Diagnostics credentials, не Core token. Каждый request проверяет signature/introspection, iss, exact resource/aud, exp/nbf, scopes и локальный owner sub. Полный code+PKCE S256 flow выбранного mature IdP требует live acceptance. Keycloak шаблон — кандидат с экспериментальной MCP resource поддержкой, не доказательство readiness. Transport runtime key отдельно, не в plugin/export/audit, нет admin key в daemon.
+
+Отзыв локальной remote policy/owner/source обязателен сразу для следующих запросов и active streams≤5s. Сроки IdP revocation и кеша проверяются отдельно (цель≤60s); если они ещё не испытаны, не заявлять немедленный внешний logout. Пауза удалённого чтения и остановка локального сбора — разные действия владельца.
+
+Audit содержит только tool/source/time/count/size/result/latency и псевдоним subject, без query text/chat/raw log/headers/tokens. Ingress gate проверяет настоящий peer и закреплённого администратора, CSRF и безопасный rendering; поддельные headers вне trusted ingress запрещаются. [Pinned Supervisor proxy](https://github.com/home-assistant/supervisor/blob/2026.09.3/supervisor/api/ingress.py) валидирует сессию и заменяет caller remote-user ID своей trusted identity; продукт не использует POST validate_session. Actual proxy peer/header/CSRF всё ещё требует HA test. До подтверждения local admin gate настройки закрыты. Exports/HA backups должны исключать archive/secrets по профилю; восстановление broad token/owner binding автоматом не допускается.
+
+Пожалуйста, сообщайте обнаруженный дефект владельцу репозитория без credentials или реальных журналов в public issue. Для live release выполните SEC/DATA/OAuth/HA/GPT/OPS runbook из LIVE_ACCEPTANCE.md. Public distribution, host/YAML/traces/multi-owner не включены в этот alpha scope.

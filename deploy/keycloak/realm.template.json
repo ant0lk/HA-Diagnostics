@@ -1,0 +1,28 @@
+{
+  "realm": "ha-diagnostics",
+  "enabled": true,
+  "registrationAllowed": false,
+  "sslRequired": "all",
+  "accessTokenLifespan": 300,
+  "revokeRefreshToken": true,
+  "refreshTokenMaxReuse": 0,
+  "clientScopes": [
+    {"name": "diagnostics:read", "protocol": "openid-connect", "attributes": {"include.in.token.scope": "true", "display.on.consent.screen": "true"}},
+    {"name": "history:read", "protocol": "openid-connect", "attributes": {"include.in.token.scope": "true", "display.on.consent.screen": "true"}},
+    {"name": "artifacts:read", "protocol": "openid-connect", "attributes": {"include.in.token.scope": "true", "display.on.consent.screen": "true"}}
+  ],
+  "clients": [
+    {"clientId": "ha-diagnostics-resource", "enabled": true, "protocol": "openid-connect", "bearerOnly": true,
+      "attributes": {"resource_url": "REPLACE_WITH_EXACT_MCP_RESOURCE_URI"}},
+    {"clientId": "ha-diagnostics-chatgpt", "name": "HA-Diagnostics ChatGPT owner", "enabled": false,
+      "protocol": "openid-connect", "publicClient": true, "standardFlowEnabled": true,
+      "implicitFlowEnabled": false, "directAccessGrantsEnabled": false, "serviceAccountsEnabled": false,
+      "consentRequired": true, "fullScopeAllowed": false,
+      "redirectUris": [], "webOrigins": [],
+      "attributes": {"pkce.code.challenge.method": "S256", "oauth2.device.authorization.grant.enabled": "false"},
+      "defaultClientScopes": ["diagnostics:read", "history:read", "artifacts:read"],
+      "protocolMappers": [{"name": "HA-Diagnostics resource audience", "protocol": "openid-connect",
+        "protocolMapper": "oidc-audience-mapper", "consentRequired": false,
+        "config": {"included.client.audience": "ha-diagnostics-resource", "access.token.claim": "true", "id.token.claim": "false"}}]}
+  ]
+}

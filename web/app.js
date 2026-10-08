@@ -1,10 +1,11 @@
 'use strict';
 let status, csrf, previewId, exportPoll, currentExport;
+let scheduleDirty=false, scheduleSaving=false;
 const el=id=>document.getElementById(id);
 function notice(text){el('notice').textContent=text;}
 async function action(op,args={}){
   const r=await fetch('api/action',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({op,args})});
-  const d=await r.json();if(!r.ok){const messages={EXPORT_BUSY:'Архив уже собирается. Дождитесь завершения или отмените сбор.',DISK_LOW:'Недостаточно свободного места для создания архива.',SOURCE_UNAVAILABLE:'Home Assistant временно недоступен.',EXPORT_NOT_FOUND:'Архив больше недоступен. Создайте новый.'};throw Error(messages[d.error]||d.error||'Запрос отклонён');}return d;
+  const d=await r.json();if(!r.ok){const messages={EXPORT_BUSY:'Архив уже собирается. Дождитесь завершения или отмените сбор.',DISK_LOW:'Недостаточно свободного места для создания архива.',SOURCE_UNAVAILABLE:'Home Assistant временно недоступен.',EXPORT_NOT_FOUND:'Архив больше недоступен. Создайте новый.',SCHEDULE_SAVE_FAILED:'Не удалось сохранить расписание. Проверьте свободное место и повторите попытку.'};throw Error(messages[d.error]||d.error||'Запрос отклонён');}return d;
 }
 function button(label,fn){const b=document.createElement('button');b.textContent=label;b.addEventListener('click',()=>fn().catch(e=>notice(e.message)));return b;}
 function card(title,value){const d=document.createElement('div');d.className='card';const t=document.createElement('small');t.textContent=title;const v=document.createElement('strong');v.textContent=value;d.append(t,v);return d;}
@@ -13,6 +14,30 @@ function zipLink(job){
   a.href='api/exports/'+encodeURIComponent(job.export_id)+'/download';a.download=job.filename;return a;
 }
 function formatBytes(bytes){return bytes<1048576?(bytes/1024).toFixed(1)+' KiB':(bytes/1048576).toFixed(1)+' MiB';}
+function exportDate(value){return new Intl.DateTimeFormat('ru-RU',{dateStyle:'short',timeStyle:'short',timeZone:(status.schedule||{}).timezone||'UTC'}).format(new Date(value));}
+function renderSchedule(){
+  const schedule=status.schedule||{};
+  if(!scheduleDirty&&!scheduleSaving){el('schedule-enabled').checked=!!schedule.enabled;el('schedule-time').value=schedule.time||'03:00';}
+  el('save-export-schedule').disabled=!scheduleDirty||scheduleSaving;
+  el('schedule-timezone').textContent=schedule.timezone?'Часовой пояс Home Assistant: '+schedule.timezone+(schedule.timezone_origin==='cached_ha_config'?' · последнее сохранённое значение':''):'Ожидаем часовой пояс Home Assistant. Автосбор начнётся после его получения.';
+  const errors={DISK_LOW:'Недостаточно свободного места. Повторим попытку автоматически.',SOURCE_UNAVAILABLE:'Home Assistant недоступен. Повторим попытку автоматически.',SCHEDULE_TIMEZONE_UNAVAILABLE:'Не удалось обновить часовой пояс Home Assistant.',SCHEDULE_SAVE_FAILED:'Не удалось сохранить отметку запуска. Проверьте свободное место.',SCHEDULE_SETTINGS_INVALID:'Сохранённое расписание повреждено. Укажите настройки и сохраните их.',SCHEDULE_FAILED:'Не удалось выполнить автосбор.',EXPORT_FAILED:'Последний автосбор завершился ошибкой.'};
+  let text=!schedule.enabled?'Автосохранение выключено.':schedule.next_run_at?'Ежедневно в '+schedule.time+' · '+(new Date(schedule.next_run_at)<=new Date(status.time)?'Ожидает сбор с ':'Следующий сбор: ')+exportDate(schedule.next_run_at):'Время по умолчанию — 03:00. Ожидаем сведения Home Assistant.';
+  if(schedule.error)text+=' '+(errors[schedule.error]||'Ошибка автосбора: '+schedule.error);
+  if(schedule.last_run_status==='cancelled')text+=' Последний автосбор отменён. Можно собрать ZIP вручную.';
+  if(schedule.last_run_status==='failed'&&!schedule.error)text+=' Последний автосбор завершился ошибкой. Можно собрать ZIP вручную.';
+  el('schedule-state').textContent=text;
+}
+function renderExportList(id,jobs,emptyText){
+  const list=el(id);list.replaceChildren();
+  for(const job of jobs){
+    const d=document.createElement('div');d.className='export-row';
+    const info=document.createElement('div'),title=document.createElement('strong'),details=document.createElement('small');
+    title.textContent=exportDate(job.started_at);
+    details.textContent=formatBytes(job.bytes)+' · '+job.completed_sources+' источников'+(job.demo?' · демо':'')+(job.issues?' · есть пробелы':'');
+    info.append(title,details);d.append(info,zipLink(job),button('Удалить',async()=>{await action('delete_export',{export_id:job.export_id});await refresh();}));list.append(d);
+  }
+  if(!jobs.length)list.textContent=emptyText;
+}
 function renderExports(){
   document.body.classList.add('zip-workflow');
   document.querySelectorAll('article section').forEach(s=>s.hidden=s.id!=='export');
@@ -27,21 +52,15 @@ function renderExports(){
       el('export-progress').textContent='Архив готов · '+formatBytes(j.bytes)+' · '+j.completed_sources+' источников'+(j.issues?' · '+j.issues+' источников с пробелами (подробности в manifest.json)':'');
       el('download-zip').href='api/exports/'+encodeURIComponent(j.export_id)+'/download';el('download-zip').download=j.filename;
     }else if(j.status==='collecting'){
-      el('export-progress').textContent='Собираем: '+(j.current_source||'подготовка')+' · обработано источников: '+j.completed_sources;
+      el('export-progress').textContent=(j.kind==='automatic'?'Автосбор: ':'Собираем: ')+(j.current_source||'подготовка')+' · обработано источников: '+j.completed_sources;
     }else el('export-progress').textContent=j.status==='cancelled'?'Сбор отменён. Можно создать новый архив.':'Не удалось создать архив: '+(j.error||'ошибка сбора');
   }else el('export-progress').textContent='Архив ещё не создавался.';
-  el('export-list').replaceChildren();
-  for(const job of jobs.filter(j=>j.status==='ready')){
-    const d=document.createElement('div');d.className='export-row';
-    const info=document.createElement('div'),title=document.createElement('strong'),details=document.createElement('small');
-    title.textContent=new Date(job.started_at).toLocaleString('ru-RU');
-    details.textContent=formatBytes(job.bytes)+' · '+job.completed_sources+' источников'+(job.demo?' · демо':'')+(job.issues?' · есть пробелы':'');
-    info.append(title,details);d.append(info,zipLink(job),button('Удалить',async()=>{await action('delete_export',{export_id:job.export_id});await refresh();}));el('export-list').append(d);
-  }
-  if(!jobs.some(j=>j.status==='ready'))el('export-list').textContent='Готовых архивов пока нет.';
+  renderSchedule();
+  renderExportList('automatic-export-list',jobs.filter(j=>j.status==='ready'&&j.kind==='automatic'),'Автоархивов пока нет. Первый появится после сбора по расписанию.');
+  renderExportList('export-list',jobs.filter(j=>j.status==='ready'&&j.kind!=='automatic'),'Ручных архивов пока нет. Нажмите «Собрать ZIP-архив».');
   notice(status.demo?'Демонстрационный режим: ZIP содержит тестовые данные, без подключения к вашей установке HA.':status.available?'История и события: 24 часа. Логи: за всё доступное время.':'Home Assistant недоступен. Для сбора нужен Live-профиль дополнения с доступом к Supervisor API.');
   clearTimeout(exportPoll);
-  if(jobs.some(j=>j.status==='collecting'))exportPoll=setTimeout(()=>refresh().catch(exportRetry),1500);
+  exportPoll=setTimeout(()=>refresh().catch(exportRetry),jobs.some(j=>j.status==='collecting')?1500:30000);
 }
 function exportRetry(error){notice('Не удалось обновить прогресс. '+error.message);exportPoll=setTimeout(()=>refresh().catch(exportRetry),3000);}
 function renderSources(sources){
@@ -106,6 +125,15 @@ bind('refresh-audit',refresh);
 bind('create-zip',async()=>{el('create-zip').disabled=true;try{await action('start_export',{history_hours:24});await refresh();}catch(error){el('create-zip').disabled=false;throw error;}});
 bind('cancel-zip',async()=>{if(currentExport){await action('cancel_export',{export_id:currentExport.export_id});await refresh();}});
 bind('refresh-zip',refresh);
+['schedule-enabled','schedule-time'].forEach(id=>el(id).addEventListener('input',()=>{scheduleDirty=true;el('save-export-schedule').disabled=scheduleSaving;}));
+el('export-schedule-form').addEventListener('submit',async event=>{
+  event.preventDefault();scheduleSaving=true;el('save-export-schedule').disabled=true;
+  el('schedule-enabled').disabled=true;el('schedule-time').disabled=true;
+  try{
+    await action('set_export_schedule',{enabled:el('schedule-enabled').checked,time:el('schedule-time').value});
+    scheduleDirty=false;await refresh();notice('Расписание сохранено. Оно действует без перезапуска дополнения.');
+  }catch(error){notice(error.message);}finally{scheduleSaving=false;el('schedule-enabled').disabled=false;el('schedule-time').disabled=false;el('save-export-schedule').disabled=!scheduleDirty;}
+});
 document.querySelector('[data-tab=status]').classList.add('active');refresh().catch(e=>notice(e.message));
 
 document.getElementById('tunnel-form').addEventListener('submit',async event=>{

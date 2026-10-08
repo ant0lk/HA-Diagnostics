@@ -1,0 +1,39 @@
+{
+  "product_version": "1.0.0-alpha.3",
+  "date": "2026-10-08",
+  "environment": "Local Windows, Python 3.12.14, synthetic HA sources only",
+  "pytest": {
+    "tests": 281,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 1,
+    "passed": 280,
+    "seconds": 34.353
+  },
+  "skipped": [
+    {
+      "test": "tests.test_gateway_setup.test_secret_symlink_is_rejected",
+      "reason": "Windows symlink privilege unavailable; Linux acceptance still required"
+    }
+  ],
+  "checks": {
+    "daily_schedule_without_ui": "passed",
+    "ha_timezone_and_once_per_day": "passed",
+    "schedule_atomic_save_restore_and_interrupted_restart": "passed",
+    "separate_7_automatic_3_manual_retention_restore": "passed",
+    "alpha_2_manual_archive_migration": "passed",
+    "actual_zip_structure_and_sha256": "passed",
+    "schedule_csrf_and_query_uid_denial": "passed",
+    "ui_time_edit_refresh_save_reload": "passed",
+    "ui_manual_build_and_browser_zip_download": "passed",
+    "ui_width_360_no_horizontal_overflow": "passed",
+    "ui_console_warnings_errors": 0,
+    "javascript_syntax": "passed",
+    "published_addon_copies": "passed",
+    "published_addon_sha256_file_count": 69,
+    "ha_os_install_ingress_live_sources_real_daily_run": "unverified",
+    "published_addon_canonical_line_endings": "passed; .gitattributes preserves LF for shipped source and original bytes for pinned vendor files"
+  },
+  "ui_screenshot": "alpha3-ui-desktop.jpg",
+  "git_commit_push_or_publication_performed": false
+}

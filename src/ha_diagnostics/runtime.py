@@ -441,6 +441,7 @@ async def export_worker(data,profile):
     del token
     server=AdminIPCServer(data/"ipc/export.sock",service.handlers())
     await server.start()
+    await service.start_scheduler()
     try:await asyncio.Event().wait()
     finally:await server.close();await service.close()
 
@@ -456,6 +457,7 @@ async def export_demo(data,web_dir):
     service=ExportService(data/"exports",DemoExportSources(),
         Redactor(secret_file(data/"private/redaction.key")),demo=True)
     app=create_ui(service,gate=AdminGate(demo=True),web_dir=web_dir,export_dir=data/"exports")
+    await service.start_scheduler()
     try:
         await uvicorn.Server(uvicorn.Config(app,host="127.0.0.1",port=8099,
             proxy_headers=False,access_log=False,log_level="critical")).serve()

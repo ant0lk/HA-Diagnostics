@@ -1,5 +1,5 @@
 name: HA-Diagnostics — ZIP diagnostics
-version: 1.0.0-alpha.2
+version: 1.0.0-alpha.3
 slug: ha_diagnostics_live
 description: Скачать ZIP с доступными логами, диагностикой и историей Home Assistant за 24 часа.
 url: https://github.com/ant0lk/HA-Diagnostics

@@ -1,0 +1,8 @@
+# Keep source copies and shipped checksums stable on Windows and Linux.
+/src/** text=auto eol=lf
+/web/** text=auto eol=lf
+/schemas/** text=auto eol=lf
+/requirements.lock text eol=lf
+/ha_diagnostics_live/** text=auto eol=lf
+# Pinned third-party artifacts must retain their original bytes.
+/ha_diagnostics_live/app/tunnel/** -text

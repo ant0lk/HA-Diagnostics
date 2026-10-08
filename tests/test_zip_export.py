@@ -13,7 +13,7 @@ import pytest
 
 from ha_diagnostics.broker import BrokerError
 from ha_diagnostics.export_sources import ALL_LOG_ENTRIES, DemoExportSources, ExportSources
-from ha_diagnostics.exporter import ExportArgs, ExportService, StartExportArgs
+from ha_diagnostics.exporter import ExportArgs, ExportService, StartExportArgs, STRUCTURE_FILE
 from ha_diagnostics.ipc import AdminIPCServer, IPCError
 from ha_diagnostics.redaction import Redactor
 from ha_diagnostics.ui import AdminGate, create_ui
@@ -108,7 +108,7 @@ async def test_complete_zip_contains_all_sources_24h_history_checksums_and_no_se
             assert archive.testzip() is None
             names = archive.namelist()
             manifest = json.loads(archive.read("manifest.json"))
-            assert {"README.txt", "system/core.json", "system/network.json", "registries/devices.json",
+            assert {"README.txt", STRUCTURE_FILE, "system/core.json", "system/network.json", "registries/devices.json",
                     "logs/core.log", "logs/host.log", "logs/addon/fixture_matter.log",
                     "logs/addon/stopped_addon.log"} <= set(names)
             assert len([n for n in names if n.startswith("history/")]) == 24
@@ -127,6 +127,12 @@ async def test_complete_zip_contains_all_sources_24h_history_checksums_and_no_se
             issue = next(s for s in manifest["sources"] if s["source"] == "supervisor")
             assert issue["status"] == "unavailable" and issue["reason"] == "PERMISSION_DENIED"
             assert job["issues"] == 1
+            structure = archive.read(STRUCTURE_FILE)
+            assert job["filename"].encode() in structure
+            assert manifest["archive_filename"] == job["filename"]
+            assert manifest["kind"] == "manual"
+            assert manifest["structure"]["bytes"] == len(structure)
+            assert manifest["structure"]["sha256"] == hashlib.sha256(structure).hexdigest()
             history = json.loads(archive.read("history/00.json"))[0][0]
             assert history["state"] == 0
             assert history["attributes"] == {"temperature": -7, "flag": False, "empty": "", "token": "[REDACTED]"}
@@ -184,6 +190,12 @@ async def test_ui_create_download_access_csrf_and_traversal(tmp_path):
             body = {"op": "start_export", "args": {"history_hours": 24}}
             assert (await client.post("/api/action", json=body)).status_code == 403
             headers = {"X-CSRF-Token": status["csrf"], "Origin": "http://127.0.0.1:8099"}
+            schedule_body = {"op": "set_export_schedule", "args": {"enabled": False, "time": "04:15"}}
+            assert (await client.post("/api/action", json=schedule_body)).status_code == 403
+            assert (await client.post("/api/action", headers=headers, json=schedule_body)).status_code == 200
+            assert (await client.get("/api/status")).json()["schedule"]["time"] == "04:15"
+            assert (await client.post("/api/action", headers=headers,
+                json={"op": "set_export_schedule", "args": {"enabled": True, "time": "25:00"}})).status_code == 400
             response = await client.post("/api/action", headers=headers, json=body)
             assert response.status_code == 200, response.text
             job = response.json()
@@ -276,7 +288,7 @@ async def test_completed_exports_restore_and_keep_last_three(tmp_path):
     path = service.directory / (ids[-1] + ".zip")
     os.utime(path, (time.time() - 90000, time.time() - 90000))
     restored._cleanup()
-    assert not path.exists()
+    assert path.exists()  # Count-based retention no longer expires archives after 24 hours.
     await restored.close()
 
 
@@ -343,7 +355,7 @@ def test_zip_bootstrap_runs_only_export_and_ui_with_token_fd_separated(tmp_path,
 
 def test_published_zip_sources_and_ui_match_main_sources():
     root = Path(__file__).resolve().parents[1]
-    for name in ("runtime.py", "ui.py", "ipc.py", "exporter.py", "export_sources.py"):
+    for name in ("runtime.py", "ui.py", "ipc.py", "exporter.py", "export_sources.py", "export_schedule.py"):
         assert (root / "src/ha_diagnostics" / name).read_bytes() == (
             root / "ha_diagnostics_live/app/src/ha_diagnostics" / name).read_bytes(), name
     for name in ("index.html", "app.js", "style.css"):

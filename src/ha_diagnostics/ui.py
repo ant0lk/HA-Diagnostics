@@ -116,7 +116,7 @@ def create_ui(admin_client, *, gate, web_dir, audit_path=None, transport_client=
             from .broker import BrokerError
             from .ipc import IPCError
             if isinstance(exc,(BrokerError,IPCError)) and exc.code in {
-                    "EXPORT_BUSY","EXPORT_NOT_FOUND","EXPORT_NOT_READY","DISK_LOW","SOURCE_UNAVAILABLE"}:
+                    "EXPORT_BUSY","EXPORT_NOT_FOUND","EXPORT_NOT_READY","DISK_LOW","SOURCE_UNAVAILABLE","SCHEDULE_SAVE_FAILED"}:
                 code=409 if exc.code=="EXPORT_BUSY" else 507 if exc.code=="DISK_LOW" else 503
                 return JSONResponse({"error":exc.code},status_code=code,headers={"Cache-Control":"no-store"})
             return JSONResponse({"error":"ADMIN_REQUEST_REJECTED"},status_code=400)

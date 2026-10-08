@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "1.0.0-alpha.2"
+VERSION = "1.0.0-alpha.3"
 
 
 def dump(path: Path, value: object) -> None:

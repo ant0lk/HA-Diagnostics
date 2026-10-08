@@ -77,7 +77,7 @@ def _validate_secret(value: str) -> bytes:
 
 def _write_fixed(directory: Path, filename: str, payload: bytes) -> None:
     """Atomic exclusive file; no configurable relative path or symlink follows."""
-    if filename not in {"tunnel.json", "control-plane-api-key", "introspection.secret", "relay.json", "relay-device-key"}:
+    if filename not in {"tunnel-settings.json", "tunnel.json", "control-plane-api-key", "introspection.secret", "relay.json", "relay-device-key"}:
         raise SetupError("UNSAFE_SECRET_PATH")
     target = directory / filename
     if _unsafe_link(directory) or _unsafe_link(target):
@@ -132,6 +132,8 @@ def provision(data: Path, *, tunnel_id: str | None = None, tunnel_key: str | Non
     if sys.platform not in {"linux", "win32"}:
         raise SetupError("UNSUPPORTED_SETUP_PLATFORM")
     data = _root_directory(data)
+    if (data / "transport/tunnel-settings.json").exists():
+        raise SetupError("USE_PANEL_TUNNEL_SETTINGS")
     if bool(tunnel_id) != bool(tunnel_key):
         raise SetupError("TUNNEL_ID_AND_KEY_REQUIRED")
     if tunnel_id and not TUNNEL_PATTERN.fullmatch(tunnel_id):

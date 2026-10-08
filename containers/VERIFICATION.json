@@ -1,5 +1,5 @@
 {
-  "product_version": "1.0.0-alpha.1",
+  "product_version": "1.0.0-alpha.2",
   "date": "2026-10-07",
   "checks": [
     {"name": "base_python_registry_metadata", "status": "passed", "detail": "Actual OCI index and linux/amd64, linux/arm64 manifests recorded in supply-chain.lock.json"},

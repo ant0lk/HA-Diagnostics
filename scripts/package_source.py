@@ -14,12 +14,12 @@ import re
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "1.0.0-alpha.1"
+VERSION = "1.0.0-alpha.2"
 ROOT_FILES = {".gitignore", "README.md", "CHANGELOG.md", "Dockerfile.import", "pyproject.toml",
               "repository.yaml", "requirements.in", "requirements.lock", "requirements-dev.in",
               "requirements-dev.lock", "supply-chain.lock.json"}
 DOC_FILES = {"FEASIBILITY.md", "INSTALL.md", "LIVE_ACCEPTANCE.md", "SECURITY.md",
-             "ACCEPTANCE.md", "QUICKSTART.md"}
+             "ACCEPTANCE.md", "QUICKSTART.md", "ZIP_EXPORT.md"}
 VERIFICATION_FILES = {"local-checks.json", "pytest-junit.xml"}
 DIRS = {"src", "schemas", "web", "tests", "plugin", "containers/ha-app", "deploy", "gateway", "scripts"}
 CONTAINER_FILES = {"VERIFICATION.json", "tunnel-env.json", "SBOM.md"}

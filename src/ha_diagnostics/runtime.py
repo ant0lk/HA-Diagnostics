@@ -33,7 +33,9 @@ class BootstrapStorage:
                  "public":(BROKER_UID,READ_GROUP,0o2750),
                  "ipc":(BROKER_UID,UI_UID,0o2750),
                  "query":(QUERY_UID,UI_UID,0o2750),
-                 "transport":(TRANSPORT_UID,TRANSPORT_UID,0o700)}
+                 "transport":(TRANSPORT_UID,TRANSPORT_UID,0o700),
+                 "transport-admin":(TRANSPORT_UID,UI_UID,0o2750),
+                 "exports":(BROKER_UID,UI_UID,0o2750)}
 
     def __init__(self,data):
         self.data=Path(os.path.abspath(data));self.root=None;self.directories={}
@@ -70,8 +72,9 @@ class BootstrapStorage:
         self.directories.clear()
         if self.root is not None:os.close(self.root);self.root=None
 
-    def prepare_directories(self):
+    def prepare_directories(self,names=None):
         for name,(uid,gid,mode) in self.DIRECTORIES.items():
+            if names is not None and name not in names:continue
             try:os.mkdir(name,0o700,dir_fd=self.root)
             except FileExistsError:pass
             try:fd=os.open(name,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=self.root)
@@ -86,7 +89,7 @@ class BootstrapStorage:
     def _open_file(self,directory,name,owner,*,optional=False):
         if directory not in {"root",*self.DIRECTORIES} or name not in {
             "options.json","policy.json","introspection.secret","tunnel.json",
-            "control-plane-api-key","relay.json","relay-device-key"}:
+            "control-plane-api-key","relay.json","relay-device-key","tunnel-settings.json"}:
             raise RuntimeError("UNSAFE_BOOTSTRAP_STORAGE")
         parent=self.root if directory=="root" else self.directories[directory]
         try:fd=os.open(name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=parent)
@@ -168,6 +171,18 @@ def prepare_bootstrap_storage(data,profile):
                             permissions=(TRANSPORT_UID,TRANSPORT_UID,0o600))
         relay=storage.read("transport","relay.json",TRANSPORT_UID,optional=True,
                            permissions=(TRANSPORT_UID,TRANSPORT_UID,0o600))
+        panel=storage.read("transport","tunnel-settings.json",TRANSPORT_UID,optional=True,
+                           limit=16384,permissions=(TRANSPORT_UID,TRANSPORT_UID,0o600))
+        if panel is not None:
+            if relay is not None:raise RuntimeError("TRANSPORT_CONFLICT")
+            from .transport_setup import TunnelArgs
+            from .local_setup import _write_fixed, _validate_secret
+            settings=TunnelArgs.model_validate_json(panel)
+            _write_fixed(data/"transport","control-plane-api-key",
+                         _validate_secret(settings.runtime_key.get_secret_value()))
+            storage.read("transport","control-plane-api-key",TRANSPORT_UID,
+                         permissions=(TRANSPORT_UID,TRANSPORT_UID,0o600))
+            return {"tunnel_id":settings.tunnel_id}
         if tunnel is not None and relay is not None:raise RuntimeError("TRANSPORT_CONFLICT")
         if relay is not None:
             config=json.loads(relay)
@@ -287,7 +302,10 @@ async def ui_worker(data,web_dir,options):
     from .ipc import AdminIPCClient
     harden()
     # No HA token or redaction key needed by UI.
-    app=create_ui(AdminIPCClient(data/"ipc/admin.sock"),gate=AdminGate(options.get("ingress_admin_id","")),web_dir=web_dir,audit_path=data/"query/audit.jsonl")
+    if options.get("workflow")=="zip_export":
+        app=create_ui(AdminIPCClient(data/"ipc/export.sock"),gate=AdminGate(options.get("ingress_admin_id","")),web_dir=web_dir,export_dir=data/"exports")
+    else:
+        app=create_ui(AdminIPCClient(data/"ipc/admin.sock"),gate=AdminGate(options.get("ingress_admin_id","")),web_dir=web_dir,audit_path=data/"query/audit.jsonl",transport_client=AdminIPCClient(data/"transport-admin/setup.sock"))
     await uvicorn.Server(uvicorn.Config(app,host="0.0.0.0",port=8099,proxy_headers=False,access_log=False,log_level="critical")).serve()
 
 def read_transport_file(path,limit=8192):
@@ -321,6 +339,15 @@ async def relay_worker(data):
     del key
     await client.run()
 
+async def transport_setup_worker(data):
+    from .transport_setup import TransportSetup
+    from .ipc import AdminIPCServer
+    harden()
+    server=AdminIPCServer(data/"transport-admin/setup.sock",TransportSetup(data).handlers(),max_concurrency=1)
+    await server.start()
+    try:await asyncio.Event().wait()
+    finally:await server.close()
+
 async def demo(data,web_dir):
     import uvicorn
     from .archive import Archive
@@ -336,7 +363,8 @@ async def demo(data,web_dir):
     archive=Archive(data/"public/archive.sqlite",Redactor(secret_file(data/"private/redaction.key")))
     broker=ReadBroker(lambda:broker_policy(store),archive.redactor)
     admin=AdminService(archive,store,broker)
-    ui=create_ui(admin,gate=AdminGate(demo=True),web_dir=web_dir)
+    from .transport_setup import TransportSetup
+    ui=create_ui(admin,gate=AdminGate(demo=True),web_dir=web_dir,transport_client=TransportSetup(data))
     mcp=create_app(create_query(data))
     await asyncio.gather(uvicorn.Server(uvicorn.Config(ui,host="127.0.0.1",port=8099,access_log=False,proxy_headers=False,log_level="critical")).serve(),uvicorn.Server(uvicorn.Config(mcp,host="127.0.0.1",port=8000,access_log=False,proxy_headers=False,log_level="critical")).serve())
 
@@ -355,7 +383,7 @@ def bootstrap(data,profile,options,web_dir):
     def spawn(role,uid,gid,env=None,pass_fds=()):
         def drop():
             os.setgroups([UI_UID] if role=="broker" else []);os.setgid(gid);os.setuid(uid);harden()
-        args=[sys.executable,"-m","ha_diagnostics.runtime","--role",role,"--data",str(data),"--web",str(web_dir),"--profile",profile]
+        args=[sys.executable,"-m","ha_diagnostics.runtime","--role",role,"--data",str(data),"--web",str(web_dir),"--profile",profile,"--workflow","mcp"]
         environment=clean_environment() | (env or {})
         if role=="ui": environment["HAD_ADMIN_ID"]=options.get("ingress_admin_id","")
         return subprocess.Popen(args,env=environment,preexec_fn=drop,pass_fds=pass_fds)
@@ -368,7 +396,7 @@ def bootstrap(data,profile,options,web_dir):
         while not (data/"public/archive.sqlite").exists() or not (data/"ipc/admin.sock").exists():
             if children[0].poll() is not None or time.monotonic()>deadline: raise RuntimeError("BROKER_START_FAILED")
             time.sleep(.1)
-        children.extend([spawn("query",QUERY_UID,READ_GROUP),spawn("ui",UI_UID,UI_UID)])
+        children.extend([spawn("query",QUERY_UID,READ_GROUP),spawn("transport-setup",TRANSPORT_UID,TRANSPORT_UID),spawn("ui",UI_UID,UI_UID)])
         if transport.get("relay"):
             children.append(spawn("relay",TRANSPORT_UID,TRANSPORT_UID))
         if "tunnel_id" in transport:
@@ -390,10 +418,91 @@ def bootstrap(data,profile,options,web_dir):
             try:p.wait(timeout=5)
             except subprocess.TimeoutExpired:p.kill()
 
+def prepare_export_storage(data):
+    # Ignore old policy/OAuth/transport settings; ZIP collection needs none.
+    with BootstrapStorage(data) as storage:
+        storage.prepare_directories({"private","ipc","exports"})
+
+
+async def export_worker(data,profile):
+    from .export_sources import ExportSources
+    from .exporter import ExportService
+    from .redaction import Redactor
+    from .ipc import AdminIPCServer
+    harden()
+    fd=os.environ.pop("HAD_TOKEN_FD",None)
+    token=None
+    if fd is not None:
+        with os.fdopen(int(fd),"rb") as pipe:raw=pipe.read(8193)
+        if len(raw)>8192:raise RuntimeError("CREDENTIAL_LIMIT")
+        token=raw.decode() if profile=="live" else None
+    service=ExportService(data/"exports",ExportSources(token),
+                          Redactor(secret_file(data/"private/redaction.key")))
+    del token
+    server=AdminIPCServer(data/"ipc/export.sock",service.handlers())
+    await server.start()
+    try:await asyncio.Event().wait()
+    finally:await server.close();await service.close()
+
+
+async def export_demo(data,web_dir):
+    import uvicorn
+    from .export_sources import DemoExportSources
+    from .exporter import ExportService
+    from .redaction import Redactor
+    from .ui import create_ui,AdminGate
+    os.environ.pop("SUPERVISOR_TOKEN",None)
+    (data/"private").mkdir(parents=True,exist_ok=True)
+    service=ExportService(data/"exports",DemoExportSources(),
+        Redactor(secret_file(data/"private/redaction.key")),demo=True)
+    app=create_ui(service,gate=AdminGate(demo=True),web_dir=web_dir,export_dir=data/"exports")
+    try:
+        await uvicorn.Server(uvicorn.Config(app,host="127.0.0.1",port=8099,
+            proxy_headers=False,access_log=False,log_level="critical")).serve()
+    finally:await service.close()
+
+
+def bootstrap_export(data,profile,options,web_dir):
+    if sys.platform!="linux" or os.geteuid()!=0:
+        raise RuntimeError("LINUX_ROOT_BOOTSTRAP_REQUIRED; use --demo for local ZIP testing")
+    harden();os.umask(0o027)
+    prepare_export_storage(data)
+    token_fd=os.environ.pop("HAD_BOOTSTRAP_TOKEN_FD",None)
+    if token_fd is not None:r=int(token_fd)
+    else:r,w=os.pipe();os.close(w)
+    children=[]
+    def spawn(role,uid,gid,env=None,pass_fds=()):
+        def drop():
+            os.setgroups([UI_UID] if role=="export" else [])
+            os.setgid(gid);os.setuid(uid);harden()
+        args=[sys.executable,"-m","ha_diagnostics.runtime","--role",role,
+            "--data",str(data),"--web",str(web_dir),"--profile",profile,"--workflow","zip_export"]
+        return subprocess.Popen(args,env=clean_environment()|(env or {}),preexec_fn=drop,pass_fds=pass_fds)
+    try:
+        children.append(spawn("export",BROKER_UID,UI_UID,{"HAD_TOKEN_FD":str(r)},(r,)))
+    finally:os.close(r)
+    try:
+        deadline=time.monotonic()+30
+        while not (data/"ipc/export.sock").exists():
+            if children[0].poll() is not None or time.monotonic()>deadline:
+                raise RuntimeError("EXPORT_WORKER_START_FAILED")
+            time.sleep(.1)
+        children.append(spawn("ui",UI_UID,UI_UID,{"HAD_ADMIN_ID":options.get("ingress_admin_id","")}))
+        while all(p.poll() is None for p in children):time.sleep(.5)
+        raise RuntimeError("WORKER_STOPPED")
+    finally:
+        for p in children:
+            if p.poll() is None:p.terminate()
+        for p in children:
+            try:p.wait(timeout=5)
+            except subprocess.TimeoutExpired:p.kill()
+
+
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument("--demo",action="store_true")
-    parser.add_argument("--role",choices=["broker","query","ui","relay"])
+    parser.add_argument("--role",choices=["broker","query","ui","relay","transport-setup","export"])
+    parser.add_argument("--workflow",choices=["zip_export","mcp"],default=os.environ.get("HAD_WORKFLOW","zip_export"))
     parser.add_argument("--data",type=Path,default=Path("/data"))
     parser.add_argument("--web",type=Path,default=Path(__file__).resolve().parents[2]/"web")
     parser.add_argument("--profile",choices=["import_only","live"],default=os.environ.get("HAD_PROFILE","import_only"))
@@ -409,14 +518,18 @@ def main():
             os.close(w)
             environment=clean_environment()|{"HAD_BOOTSTRAP_CLEAN":"1","HAD_BOOTSTRAP_TOKEN_FD":str(r),"HAD_PROFILE":args.profile}
             os.execve(sys.executable,[sys.executable,"-m","ha_diagnostics.runtime",*sys.argv[1:]],environment)
-        if args.demo: asyncio.run(demo(data,args.web));return
-        if args.role=="broker":asyncio.run(broker_worker(data,args.profile))
+        if args.demo:
+            asyncio.run(export_demo(data,args.web) if args.workflow=="zip_export" else demo(data,args.web));return
+        if args.role=="export":asyncio.run(export_worker(data,args.profile))
+        elif args.role=="broker":asyncio.run(broker_worker(data,args.profile))
         elif args.role=="query":asyncio.run(query_worker(data))
-        elif args.role=="ui":asyncio.run(ui_worker(data,args.web,{"ingress_admin_id":os.environ.get("HAD_ADMIN_ID","")}))
+        elif args.role=="ui":asyncio.run(ui_worker(data,args.web,{"ingress_admin_id":os.environ.get("HAD_ADMIN_ID",""),"workflow":args.workflow}))
         elif args.role=="relay":asyncio.run(relay_worker(data))
+        elif args.role=="transport-setup":asyncio.run(transport_setup_worker(data))
         else:
             options=read_bootstrap_options(data)
-            bootstrap(data,args.profile,options,args.web)
+            if args.workflow=="zip_export":bootstrap_export(data,args.profile,options,args.web)
+            else:bootstrap(data,args.profile,options,args.web)
     except KeyboardInterrupt: pass
     except Exception:
         # No tracebacks or credentials in process output.

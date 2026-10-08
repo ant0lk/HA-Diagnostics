@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ha-diagnostics"
-version = "1.0.0-alpha.1"
-description = "Local, read-only Home Assistant diagnostics archive and MCP server"
+version = "1.0.0-alpha.2"
+description = "Read-only Home Assistant diagnostic ZIP export with logs and 24-hour history"
 requires-python = ">=3.12,<3.14"
 dependencies = ["mcp==2.3.0", "httpx==0.28.1", "websockets==16.0", "PyJWT==2.10.1", "cryptography==46.0.5", "tzdata==2026.2"]
 

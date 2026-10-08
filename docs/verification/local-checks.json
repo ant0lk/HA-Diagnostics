@@ -1,5 +1,5 @@
 {
-  "product_version": "1.0.0-alpha.1",
+  "product_version": "1.0.0-alpha.2",
   "date": "2026-10-07",
   "environment": {
     "python": "3.12.14",
@@ -19,7 +19,7 @@
     "junit_sha256": "f5f7fe31b5a9cb6cfa4c852a49a6578631f6284b47b87831f4e5f60aeb30e3c5"
   },
   "benchmark": {
-    "product_version": "1.0.0-alpha.1",
+    "product_version": "1.0.0-alpha.2",
     "schema_version": 2,
     "python": "3.12.14",
     "platform": "win32",
@@ -119,7 +119,7 @@
   "local_process_http_smoke": {
     "ui_index_status": 200,
     "ui_api_status": 200,
-    "version": "1.0.0-alpha.1",
+    "version": "1.0.0-alpha.2",
     "mode": "import_only",
     "coverage_present": true,
     "audit_present": true,

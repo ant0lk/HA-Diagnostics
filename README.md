@@ -1,14 +1,35 @@
 # HA-Diagnostics
 
-Предварительная alpha-версия `1.0.0-alpha.1`: локальная диагностика Home Assistant и ограниченные очищенные выборки через MCP. Продукт читает HA и устройства; управляющих tools, service calls, restart/reload и изменения конфигурации нет. Настройки собственного приложения меняет только владелец локально.
+Версия `1.0.0-alpha.2`. Основной сценарий дополнения — собрать диагностику Home Assistant и скачать **один ZIP-архив** через локальную панель. Нажмите **«Собрать ZIP-архив»**, дождитесь результата и выберите **«Скачать ZIP»**. История состояний и журнал событий включаются за **последние 24 часа**; логи запрашиваются за всё время, доступное через Supervisor API.
 
-Python packaging нормализует имя/metadata wheel этой версии как `1.0.0a1` по PEP440; исходный pyproject, приложение HA, plugin.json, CHANGELOG и image tags используют `1.0.0-alpha.1`.
+Архив содержит логи Core, Supervisor, хоста, DNS, Audio, CLI, Observer, Multicast и всех установленных дополнений, сведения о системе и сети, текущие состояния, реестры устройств/сущностей/областей/интеграций и доступную диагностику интеграций. `manifest.json` и `README.txt` показывают результаты чтений, интервалы, пропуски и контрольные суммы. Ошибка одного источника не мешает скачать остальные.
+
+Подключение ChatGPT, MCP, OAuth и Tunnel для ZIP не требуется. Сбор происходит только по запросу владельца и использует фиксированные операции чтения. Распознаваемые секреты очищаются до записи; конфигурационные файлы, `.storage`, база Recorder и медиа не копируются. Это диагностический архив, не резервная копия HA.
+
+Приложение в `ha_diagnostics_live/` сохраняет прежний slug, чтобы обновление использовало установленное дополнение. После установки укажите `ingress_admin_id` администратора в конфигурации дополнения, запустите его и откройте веб-интерфейс. Protected mode оставьте включённым. Реальная установка и скачивание через Ingress на HA OS требуют проверки на вашем стенде; локальные тесты работают с имитацией API.
+
+Подробнее: [состав ZIP и ограничения](docs/ZIP_EXPORT.md). Для демонстрации в Windows:
+
+```powershell
+$env:PYTHONPATH = (Resolve-Path .\src).Path
+.\.venv\Scripts\python.exe -m ha_diagnostics.runtime --demo --data .\.local-data --web .\web
+```
+
+Откройте [панель](http://127.0.0.1:8099/). Демо собирает явно помеченный ZIP с тестовыми данными без подключения к HA.
+
+## Сохранённый сценарий MCP
+
+Предыдущие компоненты и настройки сохранены для совместимости. Они запускаются только с `--workflow mcp` либо `HAD_WORKFLOW=mcp`; в основном ZIP-режиме query, relay и Tunnel workers не запускаются. Ниже — описание предыдущего сценария.
+
+Предварительная alpha-версия `1.0.0-alpha.2`: локальная диагностика Home Assistant и ограниченные очищенные выборки через MCP. Продукт читает HA и устройства; управляющих tools, service calls, restart/reload и изменения конфигурации нет. Настройки собственного приложения меняет только владелец локально.
+
+Python packaging нормализует имя/metadata wheel этой версии как `1.0.0a2` по PEP440; исходный pyproject, приложение HA, plugin.json, CHANGELOG и image tags используют `1.0.0-alpha.2`.
 
 Доступный этап — исходники, import-only demo, fixtures/контракт, HA app build contexts и private plugin skill. Для HTTPS relay реализована локальная привязка через одноразовый код gateway CLI. Реальная установка HA OS, границы Linux процессов, полный owner pairing/IdP OAuth flow, Inspector, Secure MCP Tunnel и диалог ChatGPT требуют отдельной приёмки. Эти ограничения не позволяют объявить весь MVP завершённым.
 
 ## Ветка alpha: установка Live из GitHub
 
-Добавьте `https://github.com/ant0lk/HA-Diagnostics#alpha` в репозитории магазина приложений HA. Ветка содержит один устанавливаемый профиль — **HA-Diagnostics — Live alpha** (`ha_diagnostics_live/`), с полным build context и закреплённым Tunnel runtime. Это подготовленная alpha-поставка: сборка/установка HA OS и реальный ChatGPT ещё не проверены.
+Добавьте `https://github.com/ant0lk/HA-Diagnostics#alpha` в репозитории магазина приложений HA. Ветка содержит один устанавливаемый профиль — **HA-Diagnostics — ZIP diagnostics** (`ha_diagnostics_live/`), с полным build context и закреплённым Tunnel runtime. Это подготовленная alpha-поставка: сборка/установка HA OS и реальный ChatGPT ещё не проверены.
 
 Шаблоны Import/Live для локального упаковщика находятся в `containers/ha-app/`; они не являются отдельными приложениями магазина. Локальная исходная `ha_diagnostics/` сохранена вне Git.
 
@@ -19,12 +40,12 @@ Python packaging нормализует имя/metadata wheel этой верс�
 ```powershell
 .\.venv\Scripts\python.exe -m pip install --require-hashes -r requirements.lock
 $env:PYTHONPATH = (Resolve-Path .\src).Path
-.\.venv\Scripts\python.exe -m ha_diagnostics.runtime --demo --data .\.local-data --web .\web
+.\.venv\Scripts\python.exe -m ha_diagnostics.runtime --workflow mcp --demo --data .\.local-data --web .\web
 ```
 
 Откройте [локальную панель](http://127.0.0.1:8099/). Импортируйте обезличенный `tests/fixtures/archive_multiline.log`, просмотрите очистку и сохраните собственную копию. Панель позволяет отдельно разрешить/отозвать передачу импорта, посмотреть evidence и аудит, удалить очищенную копию. Demo использует loopback и не требует credentials HA; это не проверка ОС-изоляции или реального MCP подключения. Завершение процесса — Ctrl+C, свой архив остаётся в исключённой из Git `.local-data`.
 
-В Linux аналогичный development запуск: `PYTHONPATH=src python -m ha_diagnostics.runtime --demo --data .local-data --web web`. Не включайте demo на HA OS.
+В Linux аналогичный development запуск: `PYTHONPATH=src python -m ha_diagnostics.runtime --workflow mcp --demo --data .local-data --web web`. Не включайте demo на HA OS.
 
 ## Установка и подключение
 

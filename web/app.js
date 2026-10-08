@@ -1,13 +1,49 @@
 'use strict';
-let status, csrf, previewId;
+let status, csrf, previewId, exportPoll, currentExport;
 const el=id=>document.getElementById(id);
 function notice(text){el('notice').textContent=text;}
 async function action(op,args={}){
   const r=await fetch('api/action',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({op,args})});
-  const d=await r.json();if(!r.ok)throw Error(d.error||'Запрос отклонён');return d;
+  const d=await r.json();if(!r.ok){const messages={EXPORT_BUSY:'Архив уже собирается. Дождитесь завершения или отмените сбор.',DISK_LOW:'Недостаточно свободного места для создания архива.',SOURCE_UNAVAILABLE:'Home Assistant временно недоступен.',EXPORT_NOT_FOUND:'Архив больше недоступен. Создайте новый.'};throw Error(messages[d.error]||d.error||'Запрос отклонён');}return d;
 }
 function button(label,fn){const b=document.createElement('button');b.textContent=label;b.addEventListener('click',()=>fn().catch(e=>notice(e.message)));return b;}
 function card(title,value){const d=document.createElement('div');d.className='card';const t=document.createElement('small');t.textContent=title;const v=document.createElement('strong');v.textContent=value;d.append(t,v);return d;}
+function zipLink(job){
+  const a=document.createElement('a');a.className='download';a.textContent='Скачать ZIP';
+  a.href='api/exports/'+encodeURIComponent(job.export_id)+'/download';a.download=job.filename;return a;
+}
+function formatBytes(bytes){return bytes<1048576?(bytes/1024).toFixed(1)+' KiB':(bytes/1048576).toFixed(1)+' MiB';}
+function renderExports(){
+  document.body.classList.add('zip-workflow');
+  document.querySelectorAll('article section').forEach(s=>s.hidden=s.id!=='export');
+  const jobs=status.exports||[];currentExport=jobs.find(j=>j.status==='collecting')||jobs[0];
+  el('create-zip').disabled=!status.available||!!jobs.find(j=>j.status==='collecting');
+  el('cancel-zip').hidden=!currentExport||currentExport.status!=='collecting';
+  el('download-zip').hidden=!currentExport||currentExport.status!=='ready';
+  el('export-progress').classList.toggle('collecting',!!currentExport&&currentExport.status==='collecting');
+  if(currentExport){
+    const j=currentExport;
+    if(j.status==='ready'){
+      el('export-progress').textContent='Архив готов · '+formatBytes(j.bytes)+' · '+j.completed_sources+' источников'+(j.issues?' · '+j.issues+' источников с пробелами (подробности в manifest.json)':'');
+      el('download-zip').href='api/exports/'+encodeURIComponent(j.export_id)+'/download';el('download-zip').download=j.filename;
+    }else if(j.status==='collecting'){
+      el('export-progress').textContent='Собираем: '+(j.current_source||'подготовка')+' · обработано источников: '+j.completed_sources;
+    }else el('export-progress').textContent=j.status==='cancelled'?'Сбор отменён. Можно создать новый архив.':'Не удалось создать архив: '+(j.error||'ошибка сбора');
+  }else el('export-progress').textContent='Архив ещё не создавался.';
+  el('export-list').replaceChildren();
+  for(const job of jobs.filter(j=>j.status==='ready')){
+    const d=document.createElement('div');d.className='export-row';
+    const info=document.createElement('div'),title=document.createElement('strong'),details=document.createElement('small');
+    title.textContent=new Date(job.started_at).toLocaleString('ru-RU');
+    details.textContent=formatBytes(job.bytes)+' · '+job.completed_sources+' источников'+(job.demo?' · демо':'')+(job.issues?' · есть пробелы':'');
+    info.append(title,details);d.append(info,zipLink(job),button('Удалить',async()=>{await action('delete_export',{export_id:job.export_id});await refresh();}));el('export-list').append(d);
+  }
+  if(!jobs.some(j=>j.status==='ready'))el('export-list').textContent='Готовых архивов пока нет.';
+  notice(status.demo?'Демонстрационный режим: ZIP содержит тестовые данные, без подключения к вашей установке HA.':status.available?'История и события: 24 часа. Логи: за всё доступное время.':'Home Assistant недоступен. Для сбора нужен Live-профиль дополнения с доступом к Supervisor API.');
+  clearTimeout(exportPoll);
+  if(jobs.some(j=>j.status==='collecting'))exportPoll=setTimeout(()=>refresh().catch(exportRetry),1500);
+}
+function exportRetry(error){notice('Не удалось обновить прогресс. '+error.message);exportPoll=setTimeout(()=>refresh().catch(exportRetry),3000);}
 function renderSources(sources){
   el('source-list').replaceChildren();
   for(const s of sources){
@@ -33,6 +69,8 @@ function renderArtifacts(){
 }
 async function refresh(){
   const r=await fetch('api/status');if(!r.ok)throw Error('Административная сессия не подтверждена');status=await r.json();csrf=status.csrf;
+  if(status.workflow==='zip_export'){renderExports();return;}
+  el('export').hidden=true;el('status').hidden=false;document.querySelector('[data-tab=export]').hidden=true;
   el('metrics').replaceChildren(card('Режим',status.mode==='live'?'Live · настройка':'Импорт'),card('Собственный архив',(status.storage_bytes/1048576).toFixed(1)+' MiB'),card('Часовой пояс HA',status.ha_timezone));
   el('timezone-origin').textContent=status.timezone_origin==='observed_ha_config'?'Пояс прочитан из HA.':'Пояс задан локально; сведения HA ещё не получены.';
   el('coverage').replaceChildren();
@@ -41,6 +79,10 @@ async function refresh(){
   el('live-preview').textContent=JSON.stringify(status.local_log_preview||[],null,2);el('policy').value=JSON.stringify(status.policy,null,2);renderSources(status.policy.sources);renderArtifacts();
   el('audit-content').textContent=(status.audit||[]).map(x=>x.at+' · '+x.tool+' · '+x.decision+' · '+x.bytes+' байт · '+x.latency_ms+' мс'+(x.error_code?' · '+x.error_code:'')).join('\n')||'Обращений ещё нет. Показаны последние 100 записей.';
   const last=(status.audit||[]).filter(x=>x.decision==='allow').at(-1);el('transport-state').textContent='Транспорт: '+status.transport+' · последний разрешённый MCP-вызов: '+(last?last.at:'нет');
+  const tunnel=status.tunnel||{};
+  el('tunnel-id').value=tunnel.tunnel_id||'';
+  el('save-tunnel').disabled=!tunnel.available;
+  el('tunnel-state').textContent=!tunnel.available?(tunnel.reason==='TRANSPORT_CONFLICT'?'Настроен HTTPS relay. Для перехода на туннель сначала отзовите и удалите настройки relay локально.':'Настройка туннеля временно недоступна.'):(tunnel.restart_required?'Настройки сохранены. Перезапустите HA-Diagnostics.':tunnel.configured?'Туннель настроен. Соединение с ChatGPT ещё нужно проверить.':'Туннель ещё не настроен.');
   notice(status.demo?'Локальный import-only режим разработки. Изоляция HA OS и подключение ChatGPT не проверены.':'Предварительный alpha-выпуск. Перед подключением проверьте очистку и разрешения.');
 }
 document.querySelectorAll('[data-tab]').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('article section').forEach(s=>s.hidden=s.id!==b.dataset.tab);document.querySelectorAll('[data-tab]').forEach(x=>x.classList.toggle('active',x===b));}));
@@ -61,4 +103,19 @@ el('file').addEventListener('change',()=>{previewId=null;el('commit').disabled=t
 bind('commit',async()=>{await action('import_commit',{preview_id:previewId,share_with_chatgpt:el('share-import').checked});previewId=null;el('commit').disabled=true;await refresh();});
 bind('show-evidence',async()=>{const r=await action('read_evidence',{record_id:el('evidence-id').value.trim()});el('evidence-content').textContent=JSON.stringify(r,null,2);});
 bind('refresh-audit',refresh);
+bind('create-zip',async()=>{el('create-zip').disabled=true;try{await action('start_export',{history_hours:24});await refresh();}catch(error){el('create-zip').disabled=false;throw error;}});
+bind('cancel-zip',async()=>{if(currentExport){await action('cancel_export',{export_id:currentExport.export_id});await refresh();}});
+bind('refresh-zip',refresh);
 document.querySelector('[data-tab=status]').classList.add('active');refresh().catch(e=>notice(e.message));
+
+document.getElementById('tunnel-form').addEventListener('submit',async event=>{
+  event.preventDefault();const key=el('tunnel-key');const save=el('save-tunnel');
+  save.disabled=true;
+  try{
+    const body=JSON.stringify({tunnel_id:el('tunnel-id').value.trim(),runtime_key:key.value});key.value='';
+    const response=await fetch('api/tunnel',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body,cache:'no-store'});
+    if(!response.ok)throw Error('Не удалось сохранить туннель. Проверьте ID, ключ и отсутствие настроенного relay.');
+    await refresh();notice('Туннель сохранён. Перезапустите HA-Diagnostics на странице приложения в Home Assistant.');
+  }catch(error){notice(error.message);}finally{key.value='';save.disabled=!(status.tunnel||{}).available;}
+});
+document.addEventListener('visibilitychange',()=>{if(document.hidden)el('tunnel-key').value='';});

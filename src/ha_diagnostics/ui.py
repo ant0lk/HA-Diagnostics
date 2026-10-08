@@ -1,9 +1,12 @@
 """HA Ingress admin UI. Header identity only accepted from fixed trusted peer."""
 import json
 import secrets
+import re
+import os
+import stat
 from pathlib import Path
 from starlette.applications import Starlette
-from starlette.responses import FileResponse, JSONResponse
+from starlette.responses import FileResponse, JSONResponse, StreamingResponse
 from starlette.routing import Route
 
 class AdminGate:
@@ -21,7 +24,7 @@ class AdminGate:
             return origin in {"http://127.0.0.1:8099","http://localhost:8099"}
         return bool(request.headers.get("X-Ingress-Path")) and request.headers.get("Sec-Fetch-Site") in {"same-origin","same-site"}
 
-def create_ui(admin_client, *, gate, web_dir, audit_path=None):
+def create_ui(admin_client, *, gate, web_dir, audit_path=None, transport_client=None, export_dir=None):
     web_dir=Path(web_dir)
     async def index(request):
         if not gate.allow(request): return JSONResponse({"error":"INGRESS_ADMIN_NOT_VERIFIED"},status_code=403)
@@ -45,7 +48,58 @@ def create_ui(admin_client, *, gate, web_dir, audit_path=None):
                         try:audit.append(json.loads(line))
                         except ValueError:pass
             except OSError:pass
-        return JSONResponse(data|{"csrf":gate.csrf,"demo":gate.demo,"audit":audit},headers={"Cache-Control":"no-store"})
+        tunnel={"available":False,"reason":"SETUP_UNAVAILABLE"}
+        if transport_client:
+            try:tunnel=await transport_client.request("tunnel_status",{})
+            except Exception:pass
+        if data.get("workflow")=="zip_export":
+            return JSONResponse(data|{"csrf":gate.csrf,"demo":gate.demo},headers={"Cache-Control":"no-store"})
+        return JSONResponse(data|{"csrf":gate.csrf,"demo":gate.demo,"audit":audit,"tunnel":tunnel},headers={"Cache-Control":"no-store"})
+    async def download_export(request):
+        if not gate.allow(request):return JSONResponse({"error":"ACCESS_DENIED"},status_code=403)
+        export_id=request.path_params["export_id"]
+        if export_dir is None or not re.fullmatch(r"export_[a-f0-9]{32}",export_id):
+            return JSONResponse({"error":"EXPORT_NOT_FOUND"},status_code=404)
+        try:
+            result=await admin_client.request("export_download",{"export_id":export_id})
+            # The worker returns metadata, never a user-selected filesystem path.
+            path=Path(export_dir)/(export_id+".zip")
+            if path.is_symlink():raise OSError()
+            fd=os.open(path,os.O_RDONLY|getattr(os,"O_NOFOLLOW",0))
+            info=os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink!=1:
+                os.close(fd);raise OSError()
+        except Exception:
+            return JSONResponse({"error":"EXPORT_NOT_READY"},status_code=404,headers={"Cache-Control":"no-store"})
+        # Pin the file for the whole download, including concurrent removal.
+        # Avoid buffering a potentially large ZIP in browser JS or server memory.
+        import anyio
+        async def chunks():
+            with os.fdopen(fd,"rb") as source:
+                while chunk:=await anyio.to_thread.run_sync(source.read,256*1024):
+                    yield chunk
+        return StreamingResponse(chunks(),media_type="application/zip",headers={
+            "Content-Disposition":f'attachment; filename="ha-diagnostics-{export_id[7:]}.zip"',
+            "Content-Length":str(info.st_size),"Cache-Control":"no-store",
+            "X-Content-Type-Options":"nosniff"})
+    async def save_tunnel(request):
+        if not gate.write_allowed(request):return JSONResponse({"error":"ACCESS_DENIED"},status_code=403)
+        if not transport_client:return JSONResponse({"error":"SETUP_UNAVAILABLE"},status_code=503)
+        raw=bytearray()
+        async for chunk in request.stream():
+            raw.extend(chunk)
+            if len(raw)>16384:return JSONResponse({"error":"SETTINGS_TOO_LARGE"},status_code=413)
+        try:
+            from .ipc import _json_loads
+            from .transport_setup import TunnelArgs
+            data=_json_loads(bytes(raw))
+            args=TunnelArgs.model_validate(data)
+            from .local_setup import _validate_secret
+            _validate_secret(args.runtime_key.get_secret_value())
+            result=await transport_client.request("save_tunnel",data)
+            return JSONResponse(result,headers={"Cache-Control":"no-store"})
+        except Exception:
+            return JSONResponse({"error":"TUNNEL_SETTINGS_REJECTED"},status_code=400,headers={"Cache-Control":"no-store"})
     async def action(request):
         if not gate.write_allowed(request): return JSONResponse({"error":"ACCESS_DENIED"},status_code=403)
         # Stream bound before JSON parsing; do not read unbounded request.body().
@@ -58,6 +112,12 @@ def create_ui(admin_client, *, gate, web_dir, audit_path=None):
             if not isinstance(data,dict) or set(data)!={"op","args"}: raise ValueError()
             result=await admin_client.request(data["op"],data["args"])
             return JSONResponse(result,headers={"Cache-Control":"no-store"})
-        except Exception:
+        except Exception as exc:
+            from .broker import BrokerError
+            from .ipc import IPCError
+            if isinstance(exc,(BrokerError,IPCError)) and exc.code in {
+                    "EXPORT_BUSY","EXPORT_NOT_FOUND","EXPORT_NOT_READY","DISK_LOW","SOURCE_UNAVAILABLE"}:
+                code=409 if exc.code=="EXPORT_BUSY" else 507 if exc.code=="DISK_LOW" else 503
+                return JSONResponse({"error":exc.code},status_code=code,headers={"Cache-Control":"no-store"})
             return JSONResponse({"error":"ADMIN_REQUEST_REJECTED"},status_code=400)
-    return Starlette(routes=[Route("/",index),Route("/app.js",asset),Route("/style.css",asset),Route("/api/status",status),Route("/api/action",action,methods=["POST"])])
+    return Starlette(routes=[Route("/",index),Route("/app.js",asset),Route("/style.css",asset),Route("/api/status",status),Route("/api/exports/{export_id}/download",download_export),Route("/api/tunnel",save_tunnel,methods=["POST"]),Route("/api/action",action,methods=["POST"])])

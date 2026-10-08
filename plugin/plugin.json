@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "ha-diagnostics",
-  "version": "1.0.0-alpha.1",
+  "version": "1.0.0-alpha.2",
   "description": "Изучает разрешённые журналы и историю Home Assistant, объясняет сбои с доказательствами. Только чтение. Предварительная alpha.",
   "author": {"name": "ant0lk", "url": "https://github.com/ant0lk"},
   "homepage": "https://github.com/ant0lk/HA-Diagnostics",

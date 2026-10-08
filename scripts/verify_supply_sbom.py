@@ -20,7 +20,7 @@ import sys
 from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "1.0.0-alpha.1"
+VERSION = "1.0.0-alpha.2"
 AUDIT_VERSION = "2.10.1"
 PIN = re.compile(r"^([A-Za-z0-9_.-]+)(?:\[[A-Za-z0-9_,.-]+\])?==([A-Za-z0-9_.+!-]+)(?:\s*;\s*(.+?))?(?:\s+\\)?$")
 HASH = re.compile(r"^\s+--hash=sha256:([a-f0-9]{64})(?:\s+\\)?$")

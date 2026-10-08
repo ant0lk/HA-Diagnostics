@@ -22,7 +22,8 @@ MAX_FRAME = 30 * 1024 * 1024
 ADMIN_UID = 10003
 QUERY_UID = 10002
 ADMIN_OPERATIONS = frozenset({"admin_status", "discover_sources", "discover_entities", "import_preview",
-    "import_commit", "set_policy", "revoke_access", "delete_archive", "pause_collection", "read_local_artifact", "approve_artifact", "delete_artifact", "read_evidence"})
+    "import_commit", "set_policy", "revoke_access", "delete_archive", "pause_collection", "read_local_artifact", "approve_artifact", "delete_artifact", "read_evidence", "tunnel_status", "save_tunnel",
+    "start_export", "export_status", "export_download", "cancel_export", "delete_export"})
 
 
 class IPCError(Exception):
@@ -38,7 +39,8 @@ class EmptyArgs(BaseModel):
 class IPCEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     op: Literal["admin_status", "discover_sources", "discover_entities", "import_preview", "import_commit",
-                "set_policy", "revoke_access", "delete_archive", "pause_collection", "read_local_artifact", "approve_artifact", "delete_artifact", "read_evidence"]
+                "set_policy", "revoke_access", "delete_archive", "pause_collection", "read_local_artifact", "approve_artifact", "delete_artifact", "read_evidence", "tunnel_status", "save_tunnel",
+                "start_export", "export_status", "export_download", "cancel_export", "delete_export"]
     args: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -144,7 +146,11 @@ class AdminIPCServer:
                 return await result if inspect.isawaitable(result) else result
         except IPCError:
             raise
-        except Exception:
+        except Exception as exc:
+            from .broker import BrokerError
+            if isinstance(exc,BrokerError) and envelope.op in {
+                    "start_export","export_status","export_download","cancel_export","delete_export"}:
+                raise IPCError(exc.code) from None
             # Import text, upstream exceptions and credentials never appear here.
             raise IPCError("IPC_OPERATION_FAILED") from None
 

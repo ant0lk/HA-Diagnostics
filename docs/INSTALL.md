@@ -1,4 +1,13 @@
-# Установка HA-Diagnostics 1.0.0-alpha.1
+# Установка HA-Diagnostics 1.0.0-alpha.2
+
+## Основной сценарий: ZIP
+
+Для скачивания диагностического архива используйте дополнение `ha_diagnostics_live/` (HA-Diagnostics — ZIP diagnostics). Slug и версия `1.0.0-alpha.2` сохранены. Укажите `ingress_admin_id` администратора в конфигурации дополнения, запустите его, откройте веб-интерфейс и нажмите «Собрать ZIP-архив», затем «Скачать ZIP». История и события — последние 24 часа, логи — весь доступный сохранённый период. Protected mode должен оставаться включённым.
+
+MCP, OAuth, Tunnel и HTTPS relay для ZIP не настраиваются и не запускаются. Состав, очистка, пределы и отчёт о пробелах описаны в [ZIP_EXPORT.md](ZIP_EXPORT.md). На HA OS необходимо проверить обновление установленного дополнения, Ingress, доступность реальных API и скачивание.
+
+Ниже сохранены инструкции предыдущего режима MCP; для него нужен явный `--workflow mcp` / `HAD_WORKFLOW=mcp`.
+
 
 Это предварительная alpha-поставка исходников и пакетов. Реальные Linux контейнеры/HA OS/ChatGPT ещё требуют приёмки из LIVE_ACCEPTANCE.md. Не открывайте домашний HA наружу. Без завершённой локальной настройки удалённое чтение закрыто.
 
@@ -22,8 +31,8 @@ Tunnel archives в `containers/vendor/` не включаются в Git. Есл
 На Linux Docker builder (в этой Windows среде Docker не обнаружен):
 
 ```sh
-docker buildx build --platform linux/amd64 --build-arg BUILD_ARCH=amd64 --load -t ha-diagnostics-import:1.0.0-alpha.1 dist/ha-addons/ha_diagnostics
-docker buildx build --platform linux/amd64 --build-arg BUILD_ARCH=amd64 --load -t ha-diagnostics-live:1.0.0-alpha.1 dist/ha-addons/ha_diagnostics_live
+docker buildx build --platform linux/amd64 --build-arg BUILD_ARCH=amd64 --load -t ha-diagnostics-import:1.0.0-alpha.2 dist/ha-addons/ha_diagnostics
+docker buildx build --platform linux/amd64 --build-arg BUILD_ARCH=amd64 --load -t ha-diagnostics-live:1.0.0-alpha.2 dist/ha-addons/ha_diagnostics_live
 ```
 
 Повторите build для linux/arm64 на соответствующем runner. Ничего не push. Перед live release сохраните `docker image inspect` digest, image SBOM, vulnerability scan и actual runtime результаты. `build.yaml` отсутствует согласно текущему HA packaging; зависимости копируются внутрь staged app context.
@@ -41,7 +50,7 @@ docker buildx build --platform linux/amd64 --build-arg BUILD_ARCH=amd64 --load -
 5. `HA-Diagnostics — Live alpha` — отдельное приложение с broad manager token у broker. Установку используйте для контролируемого испытания, затем выберите конечный список реально обнаруженных источников и разрешённых диагностических сущностей. «Все допустимые» означает сохранить перечисленный локальный набор, не wildcard API-доступ. Camera/media/person/geolocation в MCP не включаются.
 6. Сверьте чтение Core/Supervisor/addon/Recorder с эталоном, проверьте /proc/env/IPC негативные проверки прежде, чем разрешать удалённое чтение. При провале границы прекратите live profile; import продолжает работать.
 
-Standalone `Dockerfile.import` вне Supervisor нужен, если HA credential не должен выдаваться даже bootstrap. Его можно собрать локально с тегом `ha-diagnostics-import:1.0.0-alpha.1`; по умолчанию он не публикует порт и не имеет сессии HA Ingress. Для панели нужен отдельный проверенный локальный admin/development доступ — это не HA Container live поддержка.
+Standalone `Dockerfile.import` вне Supervisor нужен, если HA credential не должен выдаваться даже bootstrap. Его можно собрать локально с тегом `ha-diagnostics-import:1.0.0-alpha.2`; по умолчанию он не публикует порт и не имеет сессии HA Ingress. Для панели нужен отдельный проверенный локальный admin/development доступ — это не HA Container live поддержка.
 
 ## 3. OAuth и безопасная локальная настройка
 
@@ -60,6 +69,12 @@ python -m ha_diagnostics.local_setup --data /data
 Helper спрашивает несекретный Tunnel ID, затем скрыто через getpass — runtime API key. Если Tunnel ID пустой, он предлагает единственный HTTPS origin личного relay и скрыто спрашивает device-channel key. Затем, если IdP требует introspection authentication, вводится отдельный client secret. Enter пропускает ненужный вариант. При отсутствии безопасной интерактивной консоли helper закрывается с ошибкой; перенаправление stdin, secret в аргументе или environment не используется. Он не обращается в HA/OpenAI/IdP и не регистрирует connection. Запуск такого helper — локальная настройка приложения владельцем, не MCP tool и не HA service call.
 
 На Linux запись атомарная, фиксированные имена имеют mode0600. После штатного перезапуска приложения bootstrap назначает transport key UID10004 и `/data/query/introspection.secret` UID10002; соответственно каталоги закрыты другими процессами. Tunnel хранит `/data/transport/tunnel.json` и `control-plane-api-key`; relay — `/data/transport/relay.json` с единственным `origin` и отдельный `relay-device-key`. Tunnel и relay взаимоисключающие: существующий другой config не перезаписывается, helper возвращает TRANSPORT_CONFLICT. Переключение требует локального удаления прежних transport config/key владельцем и отзыва старого ключа. Introspection secret нужен query-процессу для проверки MCP OAuth и не является HA credential. Проверьте `stat` без чтения содержимого файлов и затем проверки /proc/IPC по runbook. Supervisor token вручную не вводится. Helper в Windows поддерживает только development и не доказывает Linux ownership/ACL. Если безопасная локальная консоль приложения пока недоступна, не обходите её отправкой секретов в чат: transport setup остаётся незавершённым.
+
+## Настройка туннеля через панель (alpha.2)
+
+В HA-Diagnostics откройте «Подключение ChatGPT», введите Tunnel ID и runtime API key, нажмите «Сохранить туннель». Затем перезапустите только HA-Diagnostics на странице приложения Home Assistant. Terminal & SSH для этого не нужен. Доступ к форме защищён проверкой администратора HA Ingress и CSRF.
+
+Пара ID/key сохраняется атомарно в `/data/transport/tunnel-settings.json`, mode0600, UID10004; UI не читает ключ обратно. Отдельный процесс transport-setup не получает HA credential; broker и MCP/query не имеют доступа к файлу или операции. На старте bootstrap подготавливает отдельный файл ключа для Tunnel runtime. При наличии настроек панели CLI helper не перезаписывает их. Существующий relay блокирует настройку туннеля. Сохранение не меняет policy remote_enabled, не создаёт OAuth и не подтверждает доступность ChatGPT. Demo позволяет проверить только форму и локальное сохранение; секреты production в demo не вводятся.
 
 ## 4. Проверка доступности Secure MCP Tunnel
 
@@ -103,4 +118,4 @@ python scripts/package_plugin.py --registered-server-id ВАШ_РЕАЛЬНЫЙ_
 
 В локальной панели выключите удалённый доступ/owner binding и выбранные источники или imports. Следующий вызов должен быть запрещён, active выдача отменена по критерию ≤5s. Это kill switch; удаление плагина в ChatGPT не заменяет его. Затем отзовите refresh/session в IdP и runtime transport key в Platform/личном gateway, остановите транспорт. История сборщика может продолжаться при паузе удалённого доступа; остановка сбора отдельна.
 
-При обновлении сохраняйте версию `1.0.0-alpha.1` до отдельного указания. Повторяйте lock/hash/negative tests и runbook; source package не содержит state. Для отката используйте предыдущий проверенный image digest и совместимую копию своего очищенного архива/политики. Backup defaults исключают архив и secrets; автоматическое восстановление credentials не обещается. Локальное удаление не удаляет уже переданные ответы в ChatGPT или резервные копии других систем.
+При обновлении сохраняйте версию `1.0.0-alpha.2` до отдельного указания. Повторяйте lock/hash/negative tests и runbook; source package не содержит state. Для отката используйте предыдущий проверенный image digest и совместимую копию своего очищенного архива/политики. Backup defaults исключают архив и secrets; автоматическое восстановление credentials не обещается. Локальное удаление не удаляет уже переданные ответы в ChatGPT или резервные копии других систем.

@@ -1,11 +1,11 @@
-# Личный gateway 1.0.0-alpha.4
+# Личный gateway 1.0.0-alpha.5
 
 Это исходники и container recipe для внешнего личного шлюза. Контейнер не собран, домен не создан, OAuth и реальный ChatGPT вызов не проверены. Покупку сервера и публикацию выполняет владелец по отдельному указанию.
 
 Сборка с корнем репозитория в качестве context:
 
 ```sh
-docker build -f deploy/gateway/Containerfile -t ha-diagnostics-gateway:1.0.0-alpha.4 .
+docker build -f deploy/gateway/Containerfile -t ha-diagnostics-gateway:1.0.0-alpha.5 .
 ```
 
 Entrypoint запускает `gateway/ha_diagnostics_gateway.py --data /data`. Процесс UID/GID10004 читает `/data/policy.json`, `/data/device-channel-key` и private enrollment files. Только собственный `/data` gateway монтируется **writable** для UID10004: enrollment/rotation создаёт фиксированные key/state/lock файлы. Secrets имеют mode0600, каталог mode0700; image filesystem можно оставить read-only. Secret не передаётся в аргументах, environment, Dockerfile или compose. Внешний gateway не получает SUPERVISOR_TOKEN, архив HA или исходные журналы. Policy содержит собственный публичный resource `https://ваш-домен/mcp`, issuer/JWKS/scopes, явно привязанный owner sub и тот же случайный installation ID, что HA local policy. Используйте тот же формат PolicyStore, что в приложении; не копируйте домашний `/data` целиком. Здесь предусмотрена одна installation и отдельный уникальный channel key. Текущий verifier принимает RS256/ES256 JWT; opaque tokens не поддерживаются. Для confidential-client introspection gateway читает отдельный `/data/introspection.secret`, также mode0600 UID10004, bounded≤8192bytes и без symlink; отсутствие обязательного secret закрывает старт. Provision этой отдельной внешней копии выполняет владелец через свой secret manager, не home `/data` export. Перед live release нужна полная проверка IdP flow.

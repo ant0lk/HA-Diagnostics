@@ -44,12 +44,23 @@ class RegistryWS:
         if self.count == 2:
             return json.dumps({"type": "auth_ok"})
         command = self.sent[-1]["type"]
+        if command == "system_health/info":
+            if self.count == 3:
+                return json.dumps({"id": 1, "type": "result", "success": True, "result": None})
+            return json.dumps({"id": 1, "type": "event", "event": {"type": "initial", "data": {}} if
+                self.count == 4 else {"type": "finish"}})
         if command == "config_entries/get":
             rows = [{"entry_id": ENTRY_ID, "domain": "matter"}]
         elif command == "config/device_registry/list":
             rows = [{"id": "d" * 32, "name": "Bedroom", "config_entries": [ENTRY_ID]}]
         elif command == "config/entity_registry/list":
             rows = [{"entity_id": "sensor.fixture", "device_id": "d" * 32, "config_entry_id": ENTRY_ID}]
+        elif command == "repairs/list_issues":
+            rows = {"issues": []}
+        elif command == "recorder/validate_statistics":
+            rows = {}
+        elif command.startswith(("trace/", "recorder/")) or command in {"system_log/list", "persistent_notification/get"}:
+            rows = []
         else:
             rows = [{"area_id": "bedroom", "name": "Bedroom"}]
         return json.dumps({"id": 1, "type": "result", "success": True, "result": rows})
@@ -94,7 +105,9 @@ def sources_fixture(*, fail_supervisor=False, many_lines=False, configuration_ro
         socket = RegistryWS();sockets.append(socket);return socket
     reader = ConfigurationReader(configuration_root) if configuration_root else None
     return ExportSources(TOKEN, transport=httpx.MockTransport(handler), websocket_connector=ws,
-                         configuration_reader=reader), requests, sockets
+                         configuration_reader=reader, resource_reader=lambda: {
+                             "cpu": {"models": ["Fixture CPU"], "logical_processors": 4},
+                             "memory": {"total_bytes": 8589934592}, "sources": {"cpu": {"status": "ok"}}}), requests, sockets
 
 
 async def finish(service):
@@ -123,7 +136,7 @@ async def test_complete_zip_contains_all_sources_24h_history_checksums_and_no_se
             assert {"README.txt", STRUCTURE_FILE, "system/core.json", "system/network.json", "registries/devices.json",
                     "logs/core.log", "logs/host.log", "logs/addon/fixture_matter.log",
                     "logs/addon/stopped_addon.log"} <= set(names)
-            assert len([n for n in names if n.startswith("history/")]) == 24
+            assert len([n for n in names if n.startswith("history/") and n[8:10].isdigit()]) == 24
             assert len([n for n in names if n.startswith("logbook/")]) == 24
             assert "not_installed" not in " ".join(names)
             assert archive.read("logs/core.log").count(b"INFO context\n") == 50101
@@ -377,7 +390,7 @@ def test_zip_bootstrap_runs_only_export_and_ui_with_token_fd_separated(tmp_path,
 
 def test_published_zip_sources_and_ui_match_main_sources():
     root = Path(__file__).resolve().parents[1]
-    for name in ("runtime.py", "ui.py", "ipc.py", "exporter.py", "export_sources.py", "export_schedule.py", "export_configuration.py"):
+    for name in ("runtime.py", "ui.py", "ipc.py", "exporter.py", "export_sources.py", "export_schedule.py", "export_configuration.py", "export_insights.py"):
         assert (root / "src/ha_diagnostics" / name).read_bytes() == (
             root / "ha_diagnostics_live/app/src/ha_diagnostics" / name).read_bytes(), name
     for name in ("index.html", "app.js", "style.css"):

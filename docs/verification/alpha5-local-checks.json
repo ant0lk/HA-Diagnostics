@@ -1,0 +1,53 @@
+{
+  "product_version": "1.0.0-alpha.5",
+  "date": "2026-10-09",
+  "pytest": {
+    "tests": 332,
+    "errors": 0,
+    "failures": 0,
+    "skipped": 2,
+    "passed": 330,
+    "junit_sha256": "c16294bd2bdfefa45c7423f7dbf91d844b8cd2ada2215bba044cda008887d3f9"
+  },
+  "live_build_context": {
+    "source_web_schema_requirement_parity": true,
+    "mirrored_files_verified": 53,
+    "sha256_files_verified": 71
+  },
+  "alpha5_fixture_checks": [
+    "fixed read-only HTTP/WebSocket allowlists and mutation denial",
+    "System Health initial/update/finish and interrupted partial results",
+    "traces, device diagnostics, Recorder metadata/issues and bounded daily statistics",
+    "host CPU/RAM/swap separated from cgroup limits",
+    "anonymous network traits and history/log timestamp coverage",
+    "blueprints, YAML dashboards and nested literal Jinja dependencies without execution",
+    "comparison with Alpha 5 and Alpha 4, corruption, unavailable sources and redaction-key changes",
+    "redaction, false/zero preservation, ZIP checksums and live source parity"
+  ],
+  "browser_panel": {
+    "mode": "local_demo",
+    "rendered_version": "1.0.0-alpha.5",
+    "six_cards_and_ready_archive_verified": true,
+    "zip_collected_and_downloaded_via_panel": true,
+    "manifest_sources": 114,
+    "downloaded_zip_entries_checksums_verified": 115,
+    "console_errors_or_warnings": 0,
+    "screenshot_sha256": "d29045e562402d2a74600b7b060e78fc22bd12748f4ffea0d58008710dcaafe5"
+  },
+  "source_contract_references": [
+    "https://github.com/home-assistant/core/blob/2026.9.4/homeassistant/components/trace/websocket_api.py",
+    "https://github.com/home-assistant/core/blob/2026.9.4/homeassistant/components/trace/util.py",
+    "https://github.com/home-assistant/core/blob/2026.9.4/homeassistant/components/system_health/__init__.py",
+    "https://github.com/home-assistant/core/blob/2026.9.4/homeassistant/components/persistent_notification/__init__.py",
+    "https://github.com/home-assistant/core/blob/2026.9.4/homeassistant/components/recorder/websocket_api.py",
+    "https://developers.home-assistant.io/docs/api/supervisor/endpoints/"
+  ],
+  "unverified": [
+    "HA OS installation/update, readonly mount and export worker file permissions",
+    "Linux dirfd traversal and real symlinks on target HA OS",
+    "real Supervisor/Core reads, device diagnostics support and host resources",
+    "real Ingress and large ZIP download",
+    "container build/run on amd64/aarch64"
+  ],
+  "git_commit_or_push_performed": false
+}

@@ -33,6 +33,8 @@ STORAGE_KEYS = ("core.config", "lovelace", "lovelace_dashboards", "input_boolean
 INCLUDE_TAGS = {"!include", "!include_dir_list", "!include_dir_named",
                 "!include_dir_merge_list", "!include_dir_merge_named"}
 FORBIDDEN_NAMES = re.compile(r"(?:secret|credential|password|token|private[_-]?key)", re.I)
+JINJA_REFERENCE = re.compile(r"\{%[-+]?\s*(?:from|import|include|extends)\s+(['\"])([^'\"\r\n]+)\1")
+JINJA_STATEMENT = re.compile(r"\{%[-+]?\s*(?:from|import|include|extends)\b")
 
 
 @dataclass
@@ -80,6 +82,8 @@ def parse_configuration_yaml(text: str):
         try:
             if node.tag in {"!secret", "!env_var"}:
                 return {"yaml_tag": node.tag, "value": "[REDACTED]"}
+            if node.tag == "!input" and isinstance(node, ScalarNode):
+                return {"yaml_tag": node.tag, "value": node.value}
             if node.tag in INCLUDE_TAGS:
                 if not isinstance(node, ScalarNode):
                     raise BrokerError("CONFIG_FORMAT")
@@ -158,9 +162,11 @@ class ConfigurationReader:
                 raise BrokerError("CONFIG_READ_FAILED") from None
         return path
 
-    def _read(self, relative, *, storage=False):
+    def _read(self, relative, *, storage=False, template=False):
         path = self._path(relative, storage=storage)
-        if not storage and path.suffix.lower() not in YAML_SUFFIXES:
+        if template and (path.relative_to(self.root).parts[0] != "custom_templates" or path.suffix != ".jinja"):
+            raise BrokerError("CONFIG_PATH_DENIED")
+        if not storage and not template and path.suffix.lower() not in YAML_SUFFIXES:
             raise BrokerError("CONFIG_PATH_DENIED")
         # Linux dirfd traversal prevents parent-directory symlink races. Windows
         # fixtures additionally reject junctions and verify the opened file inode.
@@ -236,6 +242,36 @@ class ConfigurationReader:
                 raise BrokerError("CONFIG_READ_FAILED") from None
         return sorted(found)
 
+    @staticmethod
+    def _dependencies(value, relative):
+        found = []
+        initial = "script" if Path(relative).name == "scripts.yaml" or relative.startswith("blueprints/script/") else "automation"
+        def visit(item, domain=initial):
+            if len(found) > MAX_CONFIG_FILES:
+                raise BrokerError("CONFIG_FILE_LIMIT")
+            if isinstance(item, dict):
+                blueprint = item.get("use_blueprint")
+                if isinstance(blueprint, dict):
+                    path = blueprint.get("path")
+                    if isinstance(path, str):
+                        found.append(("blueprint", f"blueprints/{domain}/{path}"))
+                if item.get("mode") == "yaml" and isinstance(item.get("filename"), str):
+                    found.append(("yaml_dashboard", item["filename"]))
+                for key, child in item.items():
+                    current = "script" if key.split(" ", 1)[0] == "script" else (
+                        "automation" if key.split(" ", 1)[0] == "automation" else domain)
+                    visit(child, current)
+            elif isinstance(item, list):
+                for child in item:
+                    visit(child, domain)
+            elif isinstance(item, str):
+                matches = list(JINJA_REFERENCE.finditer(item))
+                found.extend(("jinja_template", "custom_templates/" + match[2]) for match in matches)
+                if len(matches) < len(JINJA_STATEMENT.findall(item)):
+                    found.append(("dynamic_jinja_reference", ""))
+        visit(value)
+        return list(dict.fromkeys(found))
+
     def collect(self):
         documents, total, expanded_total, attempted = [], 0, 0, 0
         def measured(value):
@@ -246,17 +282,20 @@ class ConfigurationReader:
             if expanded_total > self.max_total_bytes:
                 raise BrokerError("CONFIG_TOTAL_SIZE_LIMIT")
             return value
-        def document(label, relative, *, storage=False, optional=False):
+        def document(label, relative, *, storage=False, optional=False, template=False):
             nonlocal total, attempted
             attempted += 1
             try:
                 if attempted > self.max_files:
                     raise BrokerError("CONFIG_FILE_LIMIT")
-                body = self._read(relative, storage=storage)
+                body = self._read(relative, storage=storage, template=template)
                 total += len(body)
                 if total > self.max_total_bytes:
                     raise BrokerError("CONFIG_TOTAL_SIZE_LIMIT")
                 text = body.decode("utf-8-sig")
+                if template:
+                    return ConfigurationDocument(label, relative, measured({"source_path": relative,
+                        "template": text, "interpretation": "saved_jinja_source_not_evaluated"})), []
                 if storage:
                     value = json.loads(text)
                     if not isinstance(value, dict) or not isinstance(value.get("data"), dict):
@@ -277,6 +316,20 @@ class ConfigurationReader:
             except (ValueError, TypeError, RecursionError):
                 return ConfigurationDocument(label, relative, error="CONFIG_FORMAT"), []
 
+        dependent_files = []
+        def dependencies(entry):
+            if entry and not entry.error:
+                try:
+                    edges = self._dependencies(entry.value.get("configuration", entry.value.get("template")), entry.origin)
+                    entry.value["dependencies"] = [{"kind": kind, "target": target or None} for kind, target in edges]
+                    measured(entry.value["dependencies"])
+                    dependent_files.extend((target, False) for kind, target in edges if target)
+                    if any(kind == "dynamic_jinja_reference" for kind, _ in edges):
+                        documents.append(ConfigurationDocument(entry.label + "-references", entry.origin,
+                                                             error="CONFIG_DYNAMIC_REFERENCE"))
+                except BrokerError as error:
+                    documents.append(ConfigurationDocument(entry.label + "-references", entry.origin, error=error.code))
+
         entry, _ = document("configuration/integrations/entries", ".storage/core.config_entries", storage=True)
         if entry:
             documents.append(entry)
@@ -288,6 +341,7 @@ class ConfigurationReader:
                                 storage=True, optional=True)
             if entry:
                 documents.append(entry)
+                dependencies(entry)
                 if key == "lovelace_dashboards" and not entry.error:
                     items = entry.value["configuration"].get("items", [])
                     if isinstance(items, list):
@@ -299,10 +353,12 @@ class ConfigurationReader:
             entry, _ = document("configuration/home_assistant/storage/lovelace." + dashboard_id,
                 ".storage/lovelace." + dashboard_id, storage=True)
             documents.append(entry)
+            dependencies(entry)
             if attempted > self.max_files or max(total, expanded_total) > self.max_total_bytes:
                 return documents
 
-        pending = deque([("configuration.yaml", False), *((path, True) for path in OPTIONAL_YAML)])
+        pending = deque([("configuration.yaml", False), *((path, True) for path in OPTIONAL_YAML), *dependent_files])
+        dependent_files.clear()
         visited, number, references = set(), 0, 0
         while pending:
             relative, optional = pending.popleft()
@@ -311,9 +367,11 @@ class ConfigurationReader:
             visited.add(relative)
             number += 1
             label = f"configuration/home_assistant/yaml/{number:03d}"
-            entry, includes = document(label, relative, optional=optional)
+            template = relative.startswith("custom_templates/") and relative.endswith(".jinja")
+            entry, includes = document(label, relative, optional=optional, template=template)
             if entry:
                 documents.append(entry)
+                dependencies(entry)
             if attempted > self.max_files or max(total, expanded_total) > self.max_total_bytes:
                 break
             for tag, reference in includes:
@@ -332,4 +390,9 @@ class ConfigurationReader:
                     number += 1
                     documents.append(ConfigurationDocument(f"configuration/home_assistant/yaml/{number:03d}",
                         (Path(relative).parent / reference).as_posix(), error=error.code))
+            if len(pending) + len(dependent_files) > self.max_files:
+                documents.append(ConfigurationDocument(label + "-references", relative, error="CONFIG_FILE_LIMIT"))
+                break
+            pending.extend(dependent_files)
+            dependent_files.clear()
         return documents

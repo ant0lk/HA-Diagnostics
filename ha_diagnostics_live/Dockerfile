@@ -2,8 +2,8 @@
 # OCI index binds both linux/amd64 and linux/arm64. No floating base tags.
 FROM python:3.13.12-slim-bookworm@sha256:a58daefb915e1e03ad48f3ca4df8832065412c5c35cacb9d39f4229184de12b6
 ARG BUILD_ARCH
-LABEL io.hass.name="HA-Diagnostics" io.hass.description="Read-only diagnostic ZIP; preliminary alpha" io.hass.version="1.0.0-alpha.4" io.hass.type="addon" io.hass.arch="${BUILD_ARCH}"
-LABEL org.opencontainers.image.title="HA-Diagnostics" org.opencontainers.image.version="1.0.0-alpha.4" org.opencontainers.image.source="https://github.com/ant0lk/HA-Diagnostics"
+LABEL io.hass.name="HA-Diagnostics" io.hass.description="Read-only diagnostic ZIP; preliminary alpha" io.hass.version="1.0.0-alpha.5" io.hass.type="addon" io.hass.arch="${BUILD_ARCH}"
+LABEL org.opencontainers.image.title="HA-Diagnostics" org.opencontainers.image.version="1.0.0-alpha.5" org.opencontainers.image.source="https://github.com/ant0lk/HA-Diagnostics"
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_DISABLE_PIP_VERSION_CHECK=1 PYTHONPATH=/opt/ha-diagnostics/src
 WORKDIR /opt/ha-diagnostics
 COPY app/requirements.lock ./requirements.lock

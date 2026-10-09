@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## 1.0.0-alpha.5 — 2026-10-09
+
+ZIP includes retained automation/script traces, Repairs, notifications, System Health/System Log, device diagnostics, floor/label registries, host services/disk/swap and Supervisor jobs/repositories. Recorder metadata/issues and up to 64 daily statistic series for seven days are exported. Referenced blueprints, YAML dashboards and literal Jinja imports are read without execution. Host overview JSON/TXT, previous-archive comparison (including Alpha 4), observed coverage and pseudonymized network traits are included. Read operations and limits remain fixed; missing API/data is explicit. No background event/load collection. HA OS acceptance remains unverified.
+
 ## 1.0.0-alpha.4 — 2026-10-08
 
 Live ZIP includes sanitized HA YAML/includes, saved UI/helper settings, integration data/options and Supervisor addon settings. `configuration/index.json` records origins and gaps. Home Assistant config is mounted read-only; secrets/env tags are not evaluated and secret fields/password schema options are redacted before writing. File/path/size limits are enforced. Daily scheduling and 7 automatic / 3 manual archive retention remain. Private addon files and live HA OS acceptance are outside local verification.

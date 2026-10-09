@@ -20,7 +20,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from . import __version__
 from .broker import BrokerError, SLUG_PATTERN
-from .export_sources import ENTRY_ID_PATTERN, JSON_SOURCES, LOG_SOURCES, REGISTRY_COMMANDS
+from .export_sources import (DEVICE_ID_PATTERN, ENTRY_ID_PATTERN, JSON_SOURCES, LOG_SOURCES,
+    REGISTRY_COMMANDS, WS_SOURCES, MAX_TRACE_READS, MAX_DEVICE_READS, MAX_STATISTIC_IDS, SourceResult, bounded_id)
+from .export_insights import (LogCoverage, history_coverage, network_context, overview_section,
+                              overview_text, comparison_record, comparison_key, pick)
 from .export_schedule import ExportSchedule, ScheduleArgs, ScheduleStore
 from .redaction import IDENTIFIER_KEY, SECRET_KEY, Redactor
 
@@ -201,6 +204,10 @@ class ExportService:
             self._schedule_error = "SCHEDULE_SETTINGS_INVALID"
         self._total_bytes = 0
         self._bytes_since_disk_check = 0
+        self._overview = {}
+        self._comparison = {}
+        self._versions = {}
+        self._inventories = {}
         self._restore()
         if self.schedule.last_run_status == "collecting":
             # Retry an interrupted unfinished build after a restart. Finished
@@ -468,6 +475,11 @@ class ExportService:
         try:
             self._disk_check()
             raw = await read()
+            if isinstance(raw, SourceResult):
+                record.update(status=raw.status)
+                if raw.reason:
+                    record["reason"] = raw.reason
+                raw = raw.value
             safe = self.sanitizer.json(raw, configuration=configuration)
             body = (json.dumps(safe, ensure_ascii=False, allow_nan=False, indent=2) + "\n").encode()
             if len(body) > self.max_source_bytes:
@@ -478,15 +490,54 @@ class ExportService:
                 self._write(out, body)
             record["bytes"] = len(body)
             record["sha256"] = hashlib.sha256(body).hexdigest()
+            if interval:
+                record["coverage_details"] = history_coverage(raw, label.split("/", 1)[0], self.sanitizer)
+            section = overview_section(label, safe)
+            if section is not None:
+                self._overview[label] = section
+            comparison = comparison_record(label, safe, record.get("origin"))
+            if comparison:
+                key, digest = comparison
+                self._comparison[key] = {"sha256": digest, "status": record["status"], "source": label}
+                if key.startswith(("system/", "addons/")):
+                    self._versions[key] = pick(safe, ("version", "arch", "machine", "board", "repository"))
+            if label.startswith("registries/") and isinstance(safe, list):
+                id_key = {"entities": "entity_id", "integrations": "entry_id", "areas": "area_id",
+                          "floors": "floor_id", "labels": "label_id"}.get(label.split("/")[1], "id")
+                ids = sorted({r[id_key] for r in safe if isinstance(r, dict) and isinstance(r.get(id_key), str)})
+                self._inventories[label] = {"ids": ids[:4096], "truncated": len(ids) > 4096}
         except BrokerError as error:
             record.update(status="unavailable", reason=error.code, file=None)
         except (ValueError, RecursionError):
             record.update(status="unavailable", reason="UPSTREAM_FORMAT", file=None)
         records.append(record)
+        key = comparison_key(label, record.get("origin"))
+        if record["file"] is None and key:
+            self._comparison[key] = {"sha256": None, "status": "unavailable", "source": label}
         job["completed_sources"] += 1
         job["issues"] += int(record["status"] != "ok")
         await asyncio.sleep(0)
-        return raw if record["status"] == "ok" else None
+        return raw if record["file"] else None
+
+    async def _text_source(self, archive, job, records, label, text):
+        record = {"source": label, "file": label + ".txt", "status": "ok", "observed_at": now_utc(),
+                  "bytes": 0, "sha256": None}
+        try:
+            self._disk_check()
+            body = self.sanitizer.text(text).encode()
+            if len(body) > self.max_source_bytes:
+                raise BrokerError("SOURCE_SIZE_LIMIT")
+            if self._total_bytes + len(body) > self.max_export_bytes:
+                raise BrokerError("EXPORT_SIZE_LIMIT")
+            with archive.open(record["file"], "w", force_zip64=True) as out:
+                self._write(out, body)
+            record.update(bytes=len(body), sha256=hashlib.sha256(body).hexdigest())
+        except (BrokerError, ValueError) as error:
+            record.update(status="unavailable", reason=error.code if isinstance(error, BrokerError) else "UPSTREAM_FORMAT", file=None)
+        records.append(record)
+        job["completed_sources"] += 1
+        job["issues"] += int(record["status"] != "ok")
+        await asyncio.sleep(0)
 
     async def _configuration_sources(self, archive, job, records, slugs):
         try:
@@ -520,6 +571,8 @@ class ExportService:
                     "integration_status": "registries/integrations.json"},
                 "notes": ["Saved files can differ from settings currently loaded by Home Assistant.",
                     "YAML includes are separate documents; secret/env tags and templates are not evaluated.",
+                    "Referenced blueprints, YAML dashboards and literal Jinja imports are separate documents.",
+                    "Dynamic template imports cannot be resolved without executing templates and are recorded as gaps.",
                     "Missing optional helper/dashboard stores mean no saved store was found.",
                     "Integration data/options come from the saved core.config_entries store, not diagnostics support.",
                     "Addon settings come from Supervisor info; private addon files and external includes are not read.",
@@ -538,6 +591,7 @@ class ExportService:
         pending = ""
         inside_pem = False
         received = 0
+        coverage = LogCoverage(self.schedule.timezone if self._timezone_observed else None)
         stream = self.sources.logs(source)
         with archive.open(record["file"], "w", force_zip64=True) as out:
             def emit(line):
@@ -550,6 +604,8 @@ class ExportService:
                 digest.update(body)
                 record["bytes"] += len(body)
                 record["lines"] += safe.count("\n")
+                if safe:
+                    coverage.add(line)
             try:
                 async for chunk in stream:
                     received += len(chunk)
@@ -574,9 +630,210 @@ class ExportService:
             finally:
                 await stream.aclose()
         record["sha256"] = digest.hexdigest()
+        record["coverage_details"] = coverage.as_dict()
+        record["received_bytes"] = received
+        if record["status"] != "ok":
+            record["truncation"] = {"written_bytes": record["bytes"], "written_lines": record["lines"],
+                "received_bytes": received, "reason": record["reason"], "last_written_timestamp_utc": coverage.last}
         records.append(record)
         job["completed_sources"] += 1
         job["issues"] += int(record["status"] != "ok")
+
+    async def _expanded_sources(self, archive, job, records, devices, end):
+        metadata = None
+        for label in WS_SOURCES:
+            raw = await self._json_source(archive, job, records, label,
+                lambda label=label: self.sources.supplemental(label), configuration=True)
+            if label == "statistics/metadata":
+                metadata = raw
+        for domain in ("automation", "script"):
+            traces = await self._json_source(archive, job, records, f"traces/{domain}/list",
+                lambda domain=domain: self.sources.traces(domain), configuration=True)
+            if traces is None:
+                continue
+            if not isinstance(traces, list):
+                async def invalid():
+                    raise BrokerError("UPSTREAM_FORMAT")
+                await self._json_source(archive, job, records, f"traces/{domain}/index", invalid)
+                continue
+            valid = {(t["item_id"], t["run_id"]): t for t in traces if isinstance(t, dict) and
+                t.get("domain") == domain and bounded_id(t.get("item_id"), 128) and bounded_id(t.get("run_id"), 128)}
+            # Read the most recent retained runs first, with deterministic names independent of upstream IDs.
+            ordered = sorted(valid, key=lambda k: str((valid[k].get("timestamp") or {}).get("start", ""))
+                if isinstance(valid[k].get("timestamp"), dict) else "", reverse=True)
+            selected = ordered[:MAX_TRACE_READS]
+            index = []
+            for number, (item_id, run_id) in enumerate(selected, 1):
+                label = f"traces/{domain}/{number:04d}"
+                await self._json_source(archive, job, records, label,
+                    lambda domain=domain, item_id=item_id, run_id=run_id: self.sources.trace(domain, item_id, run_id),
+                    configuration=True)
+                index.append({"item_id": item_id, "run_id": run_id, "file": records[-1]["file"],
+                              "status": records[-1]["status"], "reason": records[-1].get("reason")})
+            value = {"domain": domain, "retained_runs": len(traces), "valid_unique_runs": len(valid),
+                "read_limit": MAX_TRACE_READS, "selected_runs": index, "omitted_runs": len(ordered) - len(selected),
+                "invalid_runs": len(traces) - len(valid), "coverage": "retained_traces_only_not_24h_complete"}
+            limited = len(ordered) > MAX_TRACE_READS or len(traces) != len(valid)
+            async def trace_index(value=value, limited=limited):
+                return SourceResult(value, "partial", "TRACE_SELECTION_LIMIT_OR_FORMAT") if limited else value
+            await self._json_source(archive, job, records, f"traces/{domain}/index", trace_index, configuration=True)
+
+        pairs = sorted({(entry_id, device["id"]) for device in devices or [] if isinstance(device, dict) and
+            isinstance(device.get("id"), str) and re.fullmatch(DEVICE_ID_PATTERN, device["id"]) and
+            isinstance(device.get("config_entries"), list) for entry_id in device["config_entries"]
+            if isinstance(entry_id, str) and re.fullmatch(ENTRY_ID_PATTERN, entry_id)})
+        index = []
+        for entry_id, device_id in pairs[:MAX_DEVICE_READS]:
+            label = f"devices/{device_id}/{entry_id}"
+            await self._json_source(archive, job, records, label,
+                lambda entry_id=entry_id, device_id=device_id: self.sources.device(entry_id, device_id), configuration=True)
+            index.append({"entry_id": entry_id, "device_id": device_id, "file": records[-1]["file"],
+                          "status": records[-1]["status"], "reason": records[-1].get("reason")})
+        value = {"pairs": index, "available_pairs": len(pairs), "read_limit": MAX_DEVICE_READS,
+                 "registry_available": devices is not None, "omitted_pairs": max(0, len(pairs) - MAX_DEVICE_READS)}
+        async def device_index():
+            return SourceResult(value, "partial", "DEVICE_SELECTION_LIMIT") if len(pairs) > MAX_DEVICE_READS else value
+        await self._json_source(archive, job, records, "devices/index", device_index)
+
+        rows = metadata if isinstance(metadata, list) else []
+        ids = list(dict.fromkeys(row["statistic_id"] for row in sorted((r for r in rows if isinstance(r, dict)),
+            key=lambda r: (not r.get("has_sum", False), str(r.get("statistic_id", ""))))
+            if bounded_id(row.get("statistic_id"))))
+        selected = ids[:MAX_STATISTIC_IDS]
+        start = end - timedelta(days=7)
+        selection = {"selected_ids": selected, "available_ids": len(ids), "limit": MAX_STATISTIC_IDS,
+                     "omitted_ids": max(0, len(ids) - len(selected)), "metadata_available": metadata is not None,
+                     "from": start.isoformat(), "to": end.isoformat(), "period": "day",
+                     "selection": "sum_statistics_first_then_identifier", "retention_and_exclusions": "unknown"}
+        async def statistics_selection():
+            return SourceResult(selection, "partial", "STATISTIC_SELECTION_LIMIT") if len(ids) > len(selected) else selection
+        await self._json_source(archive, job, records, "statistics/selection", statistics_selection)
+        if selected:
+            async def statistics():
+                value = await self.sources.statistics(selected, start.isoformat(), end.isoformat())
+                return {"from": start.isoformat(), "to": end.isoformat(), "period": "day", "statistics": value}
+            await self._json_source(archive, job, records, "statistics/last_7_days", statistics)
+
+    def _previous_snapshot(self, job):
+        candidates = sorted((j for j in self.jobs.values() if j["status"] == "ready" and
+            j.get("demo", False) == self.demo and j["started_at"] <= job["started_at"]),
+            key=lambda j: j["started_at"], reverse=True)
+        if not candidates:
+            return {"status": "no_previous_archive"}, None
+        previous = candidates[0]
+        info = {"export_id": previous["export_id"], "started_at": previous["started_at"], "status": "available"}
+        path = self.directory / (previous["export_id"] + ".zip")
+        try:
+            if path.is_symlink() or not stat.S_ISREG(path.lstat().st_mode) or path.lstat().st_nlink != 1:
+                raise ValueError()
+            with zipfile.ZipFile(path) as bundle:
+                total = 0
+                def read(name):
+                    nonlocal total
+                    entry = bundle.getinfo(name)
+                    total += entry.file_size
+                    if entry.file_size > 4 * 1024 * 1024 or total > 32 * 1024 * 1024:
+                        raise ValueError()
+                    return json.loads(bundle.read(entry))
+                if "comparison/snapshot.json" in bundle.namelist():
+                    value = read("comparison/snapshot.json")
+                    if value.get("schema_version") != 1 or not isinstance(value.get("fingerprints"), dict):
+                        raise ValueError()
+                    if not all(isinstance(key, str) and isinstance(row, dict) and row.get("status") in {"ok", "partial", "unavailable"}
+                            and (row.get("sha256") is None or isinstance(row["sha256"], str) and re.fullmatch(r"[a-f0-9]{64}", row["sha256"]))
+                            for key, row in value["fingerprints"].items()):
+                        raise ValueError()
+                    if not isinstance(value.get("versions", {}), dict) or not isinstance(value.get("inventories", {}), dict):
+                        raise ValueError()
+                    for row in value.get("inventories", {}).values():
+                        if not isinstance(row, dict) or not isinstance(row.get("ids"), list) or not all(isinstance(i, str) for i in row["ids"]):
+                            raise ValueError()
+                    if value.get("key_ref") != self.sanitizer.redactor.alias("KEY_CHECK", "snapshot"):
+                        return info | {"status": "redaction_key_changed"}, None
+                    return info, value
+                # Alpha 4 archives are supported; read only their already sanitized bounded JSON entries.
+                manifest = read("manifest.json")
+                snapshot = {"fingerprints": {}, "versions": {}, "inventories": {}}
+                for record in manifest["sources"]:
+                    label, filename = record.get("source", ""), record.get("file")
+                    if not isinstance(label, str) or not label.startswith(("configuration/", "registries/", "system/", "addons/")):
+                        continue
+                    key = comparison_key(label, record.get("origin"))
+                    if key is None:
+                        continue
+                    if not filename or record.get("status") != "ok":
+                        if key:
+                            snapshot["fingerprints"][key] = {"sha256": None, "status": "unavailable", "source": label}
+                        continue
+                    safe = read(filename)
+                    comparison = comparison_record(label, safe, record.get("origin"))
+                    if comparison:
+                        key, digest = comparison
+                        snapshot["fingerprints"][key] = {"sha256": digest, "status": "ok", "source": label}
+                        if key.startswith(("system/", "addons/")):
+                            snapshot["versions"][key] = pick(safe, ("version", "arch", "machine", "board", "repository"))
+                return info | {"basis": "sanitized_alpha4_files", "identifier_key_continuity": "unknown"}, snapshot
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError, RuntimeError, zipfile.BadZipFile):
+            return info | {"status": "previous_archive_unreadable_or_limit"}, None
+
+    async def _summary_sources(self, archive, job, records):
+        overview = {"schema_version": 1, "observed_at": job["started_at"], "sections": self._overview,
+            "source_status": [dict(r) for r in records if r["source"] in self._overview or r["source"] in
+                {"system/host", "system/resources", "system/hardware", "system/network", "system/health"}],
+            "notes": ["Sources were read at different times. Missing characteristics are unknown.",
+                      "Kernel-visible totals in a VM describe the guest; container limits are separate."]}
+        async def read_overview():
+            return overview
+        await self._json_source(archive, job, records, "system/overview", read_overview)
+        await self._text_source(archive, job, records, "system/overview", overview_text(overview))
+        # Copy before writing the derived sections: comparison data never compares itself.
+        snapshot = {"schema_version": 1, "key_ref": self.sanitizer.redactor.alias("KEY_CHECK", "snapshot"),
+            "fingerprints": dict(self._comparison), "versions": dict(self._versions),
+            "inventories": dict(self._inventories), "source_status": {r["source"]: r["status"] for r in records}}
+        previous, baseline = self._previous_snapshot(job)
+        changes, inventory_changes = [], {}
+        if baseline is not None:
+            old = baseline["fingerprints"]
+            statuses = snapshot["source_status"]
+            config_complete = all(r["status"] == "ok" for r in records if r["source"].startswith("configuration/"))
+            for key in sorted(set(old) | set(snapshot["fingerprints"])):
+                before, after = old.get(key), snapshot["fingerprints"].get(key)
+                if before and after and before.get("status") == after.get("status") == "ok":
+                    if before.get("sha256") == after.get("sha256"):
+                        continue
+                    kind = "changed"
+                elif after and after.get("status") != "ok" or before and before.get("status") != "ok":
+                    kind = "not_comparable_source_unavailable"
+                elif before and not after:
+                    enumerated = config_complete if key.startswith("configuration:") else (
+                        key.startswith("addons/") and statuses.get("addons/catalog") == "ok")
+                    kind = "removed" if enumerated else "not_observed_enumeration_unavailable"
+                else:
+                    kind = "newly_observed"
+                change = {"source": key, "kind": kind}
+                if key in snapshot["versions"] or key in baseline.get("versions", {}):
+                    change.update(before=baseline.get("versions", {}).get(key), after=snapshot["versions"].get(key))
+                changes.append(change)
+            for key, current in snapshot["inventories"].items():
+                prior = baseline.get("inventories", {}).get(key)
+                if prior and not prior.get("truncated") and not current["truncated"]:
+                    added, removed = set(current["ids"]) - set(prior["ids"]), set(prior["ids"]) - set(current["ids"])
+                    if added or removed:
+                        inventory_changes[key] = {"added": sorted(added), "removed": sorted(removed)}
+        diff = {"schema_version": 1, "previous": previous, "current_export_id": job["export_id"],
+                "interval": {"from": previous.get("started_at"), "to": job["started_at"]},
+                "changes": changes, "inventory_changes": inventory_changes,
+                "notes": ["Comparison shows differences between observations, not the exact time or cause of change.",
+                          "Volatile stats, states, logs and available-update versions are excluded.",
+                          "Secrets are redacted before comparison; changes to hidden secrets are not observable."]}
+        async def read_snapshot():
+            return snapshot
+        async def read_diff():
+            return diff
+        await self._json_source(archive, job, records, "comparison/snapshot", read_snapshot)
+        await self._json_source(archive, job, records, "comparison/changes", read_diff)
+        await self._text_source(archive, job, records, "comparison/changes",
+            "HA-Diagnostics — изменения относительно предыдущего архива\n" + json.dumps(diff, ensure_ascii=False, indent=2) + "\n")
 
     async def _build(self, job):
         export_id = job["export_id"]
@@ -584,6 +841,7 @@ class ExportService:
         final = self.directory / (export_id + ".zip")
         self._total_bytes = 0
         self._bytes_since_disk_check = 0
+        self._overview, self._comparison, self._versions, self._inventories = {}, {}, {}, {}
         records = []
         try:
             # Exclusive create, no credential or raw staging files on disk.
@@ -591,24 +849,44 @@ class ExportService:
                     compresslevel=1, allowZip64=True) as archive:
                 partial.chmod(0o640)
                 addons = None
+                expected_entities = set()
+                raw_network = None
                 for label in JSON_SOURCES:
                     raw = await self._json_source(archive, job, records, label,
                         lambda label=label: self.sources.snapshot(label))
                     if label == "addons/catalog":
                         addons = raw
+                    if label == "system/network":
+                        raw_network = raw
+                    if label == "home_assistant/states" and isinstance(raw, list):
+                        expected_entities = {self.sanitizer.redactor.alias("ENTITY", row["entity_id"])
+                            for row in raw if isinstance(row, dict) and isinstance(row.get("entity_id"), str)}
                     if label == "home_assistant/config" and raw is not None:
                         try:
                             self._observe_timezone(raw)
                         except BrokerError as error:
                             self._schedule_error = error.code
+                await self._json_source(archive, job, records, "system/resources", self.sources.resources)
+                async def read_network_context():
+                    if raw_network is None:
+                        raise BrokerError("NETWORK_SOURCE_UNAVAILABLE")
+                    value = network_context(raw_network, self.sanitizer.redactor)
+                    return SourceResult(value, "partial", "NETWORK_ADDRESS_LIMIT") if value["omitted_addresses"] else value
+                await self._json_source(archive, job, records, "system/network_context", read_network_context)
+                raw_network = None
                 integrations = None
+                devices = None
                 for label in REGISTRY_COMMANDS:
                     raw = await self._json_source(archive, job, records, "registries/" + label,
                         lambda label=label: self.sources.registry(label))
                     if label == "integrations":
                         integrations = raw
+                    if label == "devices":
+                        devices = raw
                 if isinstance(addons, dict):
                     addons = addons.get("addons", [])
+                if not isinstance(addons, list):
+                    addons = []
                 slugs = sorted({a["slug"] for a in addons or [] if isinstance(a, dict)
                     and isinstance(a.get("slug"), str) and re.fullmatch(SLUG_PATTERN, a["slug"])
                     and a["slug"] != "self" and a.get("installed", True)})
@@ -630,6 +908,7 @@ class ExportService:
                         await self._json_source(archive, job, records, f"integrations/{entry_id}",
                             lambda entry_id=entry_id: self.sources.integration(entry_id))
                 end = datetime.fromisoformat(job["started_at"].replace("Z", "+00:00"))
+                await self._expanded_sources(archive, job, records, devices, end)
                 start = end - timedelta(hours=job["history_hours"])
                 for kind in ("history", "logbook"):
                     for hour in range(job["history_hours"]):
@@ -638,8 +917,21 @@ class ExportService:
                         await self._json_source(archive, job, records, f"{kind}/{hour:02d}",
                             lambda kind=kind, a=a, b=b: self.sources.history(kind, a, b),
                             interval={"from": a, "to": b})
+                async def read_history_coverage():
+                    windows = [r for r in records if re.fullmatch(r"history/\d{2}", r["source"])]
+                    returned = {entity for r in windows for entity in r.get("coverage_details", {}).get("entities", {})}
+                    missing = sorted(expected_entities - returned)
+                    return {"from": start.isoformat(), "to": end.isoformat(), "requested_windows": 24,
+                        "successful_windows": sum(r["status"] == "ok" for r in windows),
+                        "currently_known_entities": len(expected_entities), "entities_seen_in_history": len(returned),
+                        "entities_without_returned_records": missing[:4096], "entity_list_truncated": len(missing) > 4096,
+                        "per_window_entity_lists_truncated": any(r.get("coverage_details", {}).get("entity_list_truncated") for r in windows),
+                        "notes": ["No returned record does not prove exclusion or absence of events.",
+                                  "Recorder purge/retention and exclusions are not inferred from an empty response."]}
+                await self._json_source(archive, job, records, "history/coverage", read_history_coverage)
                 for source in (*LOG_SOURCES, *("addon:" + slug for slug in slugs)):
                     await self._log_source(archive, job, records, source)
+                await self._summary_sources(archive, job, records)
                 finished_at = now_utc()
                 structure = self._structure(job["filename"],
                     [*archive.namelist(), "manifest.json", "README.txt", STRUCTURE_FILE]).encode("utf-8")
@@ -652,12 +944,18 @@ class ExportService:
                     "history": {"from": start.isoformat(), "to": end.isoformat(), "hours": 24,
                         "coverage": "recorder_retention_and_exclusions_unknown"},
                     "log_scope": "all_retained_entries_exposed_by_supervisor",
-                    "limits": {"source_bytes": self.max_source_bytes, "export_bytes": self.max_export_bytes},
+                    "limits": {"source_bytes": self.max_source_bytes, "export_bytes": self.max_export_bytes,
+                        "traces_per_domain": MAX_TRACE_READS, "device_diagnostics": MAX_DEVICE_READS,
+                        "statistic_ids": MAX_STATISTIC_IDS, "statistics_days": 7, "statistics_period": "day"},
                     "redacted": True, "sources": records,
                     "notes": ["This is a diagnostic bundle, not a Home Assistant backup.",
                         "Snapshots were read at different times; the bundle is not an atomic snapshot.",
                         "Purged logs and Recorder exclusions cannot be recovered.",
                         "Configuration contains sanitized parsed YAML and selected saved UI/integration settings.",
+                        "System overview and comparison are derived from the collected sanitized observations.",
+                        "Trace and device diagnostics coverage depends on retention, permissions and integration support.",
+                        "Statistics contain up to 64 selected series for 7 days, not all retained statistics.",
+                        "No background load sampling or event subscription is enabled in this release.",
                         "No raw files, authentication stores, secrets.yaml, databases or media are copied.",
                         "Known secrets are removed; review the ZIP before sharing."]}
                 archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
@@ -721,6 +1019,13 @@ class ExportService:
             + "Логи: все записи, сохранённые и доступные через Supervisor на момент чтения.\n"
             + "configuration/: настройки HA, YAML и подключённые файлы, data/options интеграций, опции дополнений.\n"
             + "configuration/index.json: источники настроек, пути, результаты чтения и ограничения.\n"
+            + "system/overview.json и .txt: Система / Устройство и окружение — паспорт хоста, версии, ресурсы и дополнения.\n"
+            + "system/: System Health, службы хоста, диск, swap, задания и репозитории, признаки сетевых адресов.\n"
+            + "traces/: сохранённые трассы автоматизаций и скриптов; devices/: доступная диагностика устройств.\n"
+            + "home_assistant/: Repairs, постоянные уведомления и сводка System Log.\n"
+            + "statistics/: метаданные, проблемы статистики и до 64 рядов за 7 дней с шагом день.\n"
+            + "comparison/: изменения конфигурации, установленных версий и реестров относительно предыдущего ZIP.\n"
+            + "history/coverage.json и coverage_details в manifest: наблюдаемое покрытие и границы обрезки.\n"
             + "manifest.json содержит интервалы, результаты чтений, размеры и SHA-256 файлов.\n"
             + f"{STRUCTURE_FILE} содержит название ZIP и полное дерево его папок и файлов.\n"
             + f"Недоступных или частично собранных источников: {len(issues)}.\n"

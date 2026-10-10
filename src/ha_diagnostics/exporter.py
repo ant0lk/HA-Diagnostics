@@ -11,6 +11,7 @@ import re
 import secrets
 import shutil
 import stat
+import sqlite3
 import time
 import zipfile
 from datetime import datetime, timedelta, timezone
@@ -26,6 +27,7 @@ from .export_insights import (LogCoverage, history_coverage, network_context, ov
                               overview_text, comparison_record, comparison_key, pick)
 from .export_schedule import ExportSchedule, ScheduleArgs, ScheduleStore
 from .redaction import IDENTIFIER_KEY, SECRET_KEY, Redactor
+from .yandex_history import YandexArgs, YandexHistory
 
 EXPORT_ID = r"^export_[a-f0-9]{32}$"
 MAX_SOURCE_BYTES = 128 * 1024 * 1024
@@ -176,13 +178,12 @@ class ExportSanitizer:
 class ExportService:
     def __init__(self, directory: Path, sources, redactor: Redactor, *, demo=False,
                  max_source_bytes=MAX_SOURCE_BYTES, max_export_bytes=MAX_EXPORT_BYTES,
-                 min_free_bytes=MIN_FREE_BYTES, schedule_path=None, clock=None):
+                 min_free_bytes=MIN_FREE_BYTES, schedule_path=None, clock=None, yandex_history=None):
         self.directory = Path(directory)
         self.directory.mkdir(parents=True, exist_ok=True)
         if self.directory.is_symlink() or not self.directory.is_dir():
             raise ValueError("UNSAFE_EXPORT_STORAGE")
         self.sources = sources
-        self.sanitizer = ExportSanitizer(redactor, sources.scrub_known_secret)
         self.demo = demo
         self.max_source_bytes = max_source_bytes
         self.max_export_bytes = max_export_bytes
@@ -192,6 +193,17 @@ class ExportService:
         self._scheduler_task = None
         self._schedule_changed = asyncio.Event()
         self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._yandex_error = None
+        try:
+            self.yandex = yandex_history or YandexHistory(self.directory.parent / "private",
+                redactor, clock=self._clock, demo=demo)
+        except (OSError, ValueError, sqlite3.Error):
+            self.yandex = None
+            self._yandex_error = "YANDEX_STORAGE_UNAVAILABLE"
+        def scrub_secrets(text):
+            text = sources.scrub_known_secret(text)
+            return self.yandex.scrub_known_secret(text) if self.yandex else text
+        self.sanitizer = ExportSanitizer(redactor, scrub_secrets)
         self._timezone_observed = False
         self._schedule_error = None
         self.schedule_store = ScheduleStore(schedule_path or
@@ -291,7 +303,8 @@ class ExportService:
                 "export_download": (ExportArgs, self.download),
                 "cancel_export": (ExportArgs, self.cancel),
                 "delete_export": (ExportArgs, self.delete),
-                "set_export_schedule": (ScheduleArgs, self.set_schedule)}
+                "set_export_schedule": (ScheduleArgs, self.set_schedule),
+                "set_yandex": (YandexArgs, self.set_yandex)}
 
     async def status(self, args):
         self._cleanup()
@@ -300,9 +313,15 @@ class ExportService:
             "exports": [dict(j) for j in sorted(self.jobs.values(),
                 key=lambda j: j["started_at"], reverse=True)],
             "schedule": self.schedule_status(),
+            "yandex": self.yandex.status() if self.yandex else {"available": False, "error": self._yandex_error},
             "limits": {"source_bytes": self.max_source_bytes, "export_bytes": self.max_export_bytes,
                        "manual_exports": EXPORT_LIMITS["manual"],
                        "automatic_exports": EXPORT_LIMITS["automatic"]}}
+
+    async def set_yandex(self, args):
+        if self.yandex is None:
+            raise BrokerError("YANDEX_STORAGE_UNAVAILABLE")
+        return await self.yandex.configure(args)
 
     def schedule_status(self):
         return self.schedule.model_dump() | {
@@ -338,6 +357,8 @@ class ExportService:
         self._timezone_observed = True
 
     async def start_scheduler(self):
+        if self.yandex:
+            await self.yandex.start()
         if self._scheduler_task is None or self._scheduler_task.done():
             self._scheduler_task = asyncio.create_task(self._scheduler_loop(), name="daily-diagnostic-zip")
 
@@ -835,6 +856,27 @@ class ExportService:
         await self._text_source(archive, job, records, "comparison/changes",
             "HA-Diagnostics — изменения относительно предыдущего архива\n" + json.dumps(diff, ensure_ascii=False, indent=2) + "\n")
 
+    async def _yandex_sources(self, archive, job, records):
+        try:
+            if self.yandex is None:
+                raise BrokerError(self._yandex_error)
+            snapshot = await self.yandex.export_snapshot()
+        except (OSError, ValueError, sqlite3.Error, BrokerError):
+            async def unavailable():
+                raise BrokerError("YANDEX_STORAGE_UNAVAILABLE")
+            await self._json_source(archive, job, records, "yandex/coverage", unavailable)
+            return
+        coverage = snapshot["coverage"]
+        reason = coverage.get("error") or ("YANDEX_NOT_OBSERVED" if coverage["enabled"] and not coverage["last_poll_at"] else None)
+        async def read(value):
+            return SourceResult(value, "partial", reason) if reason else value
+        await self._json_source(archive, job, records, "yandex/coverage", lambda: read(coverage))
+        if coverage["configured"] or snapshot["devices"] or snapshot["events"]:
+            await self._json_source(archive, job, records, "yandex/devices", lambda: read(snapshot["devices"]))
+            await self._json_source(archive, job, records, "yandex/availability_history", lambda: read({
+                "schema_version": 1, "retained_from": coverage["retained_from"],
+                "exported_at": coverage["exported_at"], "events": snapshot["events"]}))
+
     async def _build(self, job):
         export_id = job["export_id"]
         partial = self.directory / (export_id + ".partial")
@@ -932,6 +974,7 @@ class ExportService:
                 for source in (*LOG_SOURCES, *("addon:" + slug for slug in slugs)):
                     await self._log_source(archive, job, records, source)
                 await self._summary_sources(archive, job, records)
+                await self._yandex_sources(archive, job, records)
                 finished_at = now_utc()
                 structure = self._structure(job["filename"],
                     [*archive.namelist(), "manifest.json", "README.txt", STRUCTURE_FILE]).encode("utf-8")
@@ -955,7 +998,8 @@ class ExportService:
                         "System overview and comparison are derived from the collected sanitized observations.",
                         "Trace and device diagnostics coverage depends on retention, permissions and integration support.",
                         "Statistics contain up to 64 selected series for 7 days, not all retained statistics.",
-                        "No background load sampling or event subscription is enabled in this release.",
+                        "Yandex availability history is collected independently when enabled; see yandex/coverage.json.",
+                        "No Home Assistant background load sampling or event subscription is enabled in this release.",
                         "No raw files, authentication stores, secrets.yaml, databases or media are copied.",
                         "Known secrets are removed; review the ZIP before sharing."]}
                 archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
@@ -1026,6 +1070,8 @@ class ExportService:
             + "statistics/: метаданные, проблемы статистики и до 64 рядов за 7 дней с шагом день.\n"
             + "comparison/: изменения конфигурации, установленных версий и реестров относительно предыдущего ZIP.\n"
             + "history/coverage.json и coverage_details в manifest: наблюдаемое покрытие и границы обрезки.\n"
+            + "yandex/: доступность устройств и накопленная история online/offline; coverage.json показывает подключение и пропуски.\n"
+            + "Время изменений Яндекса — время обнаружения при опросе; точный момент между проверками неизвестен.\n"
             + "manifest.json содержит интервалы, результаты чтений, размеры и SHA-256 файлов.\n"
             + f"{STRUCTURE_FILE} содержит название ZIP и полное дерево его папок и файлов.\n"
             + f"Недоступных или частично собранных источников: {len(issues)}.\n"
@@ -1042,4 +1088,6 @@ class ExportService:
         if self._task and not self._task.done():
             self._task.cancel()
             await asyncio.gather(self._task, return_exceptions=True)
+        if self.yandex:
+            await self.yandex.close()
         await self.sources.close()

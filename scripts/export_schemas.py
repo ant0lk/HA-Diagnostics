@@ -15,6 +15,6 @@ def main():
         (output/(tool.name+'.output.schema.json')).write_text(json.dumps(tool.output_schema,indent=2,ensure_ascii=False)+'\n',encoding='utf-8')
     (output/'local-policy.schema.json').write_text(json.dumps(LocalPolicy.model_json_schema(),indent=2,ensure_ascii=False)+'\n',encoding='utf-8')
     (output/'broker-request.schema.json').write_text(json.dumps(REQUEST_ADAPTER.json_schema(),indent=2)+'\n',encoding='utf-8')
-    (output/'tools.json').write_text(json.dumps({'schema_version':'1','product_version':'1.0.0-alpha.5','tools':[t.model_dump(by_alias=True,mode='json',exclude_none=True) for t in tool_definitions()]},indent=2,ensure_ascii=False)+'\n',encoding='utf-8')
+    (output/'tools.json').write_text(json.dumps({'schema_version':'1','product_version':'1.0.0-alpha.6','tools':[t.model_dump(by_alias=True,mode='json',exclude_none=True) for t in tool_definitions()]},indent=2,ensure_ascii=False)+'\n',encoding='utf-8')
     print('Exported 10 tool input/output schemas, broker and local policy schemas.')
 if __name__=='__main__':main()

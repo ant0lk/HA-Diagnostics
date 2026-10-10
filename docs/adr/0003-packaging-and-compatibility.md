@@ -2,7 +2,7 @@
 
 Дата 2026-10-07; статус: принято для source alpha, установка ожидается.
 
-Версия HA app и plugin `1.0.0-alpha.5`, контейнерные build tags такие же. JSON Schema 1.0 и MCP protocol версии самостоятельны. Цель baseline HA OS18.0 / Core2026.9.4 / Supervisor2026.09.3, amd64; aarch64 обязателен для финальной приёмки, но здесь не испытан.
+Версия HA app и plugin `1.0.0-alpha.6`, контейнерные build tags такие же. JSON Schema 1.0 и MCP protocol версии самостоятельны. Цель baseline HA OS18.0 / Core2026.9.4 / Supervisor2026.09.3, amd64; aarch64 обязателен для финальной приёмки, но здесь не испытан.
 
 База: glibc Python3.13.12 slim-bookworm по OCI index digest и обоим platform manifests в supply-chain.lock.json. Это позволяет не предполагать Alpine ABI для Tunnel. Python packages закрепляются requirements.lock с hashes. Build.yaml не включён: текущая HA документация перевела FROM/LABEL/ARG в Dockerfile.
 

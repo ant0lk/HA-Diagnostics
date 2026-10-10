@@ -1,6 +1,7 @@
 'use strict';
 let status, csrf, previewId, exportPoll, currentExport;
 let scheduleDirty=false, scheduleSaving=false;
+let yandexDirty=false, yandexSaving=false;
 const el=id=>document.getElementById(id);
 function notice(text){el('notice').textContent=text;}
 async function action(op,args={}){
@@ -26,6 +27,21 @@ function renderSchedule(){
   if(schedule.last_run_status==='cancelled')text+=' Последний автосбор отменён. Можно собрать ZIP вручную.';
   if(schedule.last_run_status==='failed'&&!schedule.error)text+=' Последний автосбор завершился ошибкой. Можно собрать ZIP вручную.';
   el('schedule-state').textContent=text;
+}
+const yandexErrors={YANDEX_TOKEN_REQUIRED:'Введите токен при первом подключении.',YANDEX_SETTINGS_REJECTED:'Проверьте токен, интервал проверки и срок хранения.',YANDEX_SAVE_FAILED:'Не удалось сохранить подключение. Проверьте свободное место.',YANDEX_STORAGE_UNAVAILABLE:'Не удалось прочитать или записать историю Яндекса.',YANDEX_SETTINGS_INVALID:'Сохранённые настройки повреждены. Введите токен и сохраните подключение заново.',YANDEX_AUTH_FAILED:'Яндекс отклонил токен. Проверьте срок его действия и право iot:view.',YANDEX_RATE_LIMIT:'Яндекс ограничил частоту запросов. Следующая проверка будет позже.',YANDEX_NETWORK_ERROR:'Нет связи с API Яндекса. Это пропуск наблюдения, а не офлайн устройств.',YANDEX_API_UNAVAILABLE:'API Яндекса временно недоступен.',YANDEX_API_FORMAT:'Ответ Яндекса не содержит ожидаемых данных.',YANDEX_DEVICE_NOT_FOUND:'Одно из устройств не найдено. Его отсутствие проверим по списку устройств.',YANDEX_DEVICE_LIMIT:'Достигнут предел: 1000 устройств. Источник отмечен как неполный.',YANDEX_RESPONSE_LIMIT:'Ответ Яндекса превысил допустимый размер.',YANDEX_REDIRECT_DENIED:'API Яндекса вернул неожиданное перенаправление.',YANDEX_POLL_TIMEOUT:'Проверка устройств не завершилась вовремя.',YANDEX_DEMO_DISABLED:'В демонстрационном режиме подключение реального аккаунта отключено.'};
+yandexErrors.YANDEX_CLOCK_INVALID='Часы переведены назад. Проверки продолжатся после восстановления временного порядка.';
+function renderYandex(){
+  const y=status.yandex||{};
+  if(!yandexDirty&&!yandexSaving){el('yandex-enabled').checked=!!y.enabled;el('yandex-poll').value=y.poll_seconds||60;el('yandex-retention').value=y.retention_days||30;}
+  const unavailable=!y.available;
+  ['yandex-enabled','yandex-token','yandex-poll','yandex-retention'].forEach(id=>el(id).disabled=unavailable||yandexSaving);
+  el('save-yandex').disabled=unavailable||!yandexDirty||yandexSaving;
+  const counts=y.counts||{};
+  let text=unavailable?(status.demo?'Подключение доступно в установленном дополнении. Демо не обращается к Яндексу.':'Подключение временно недоступно.'):!y.configured?'Яндекс ещё не подключён.':!y.enabled?'Сбор выключен. Сохранённая история продолжает включаться в ZIP.':!y.last_poll_at?'Подключение сохранено. Ожидаем первую проверку.':'Устройств: '+y.devices+' · онлайн: '+(counts.online||0)+' · офлайн: '+(counts.offline||0)+' · нет наблюдения: '+(counts.unknown||0);
+  if(y.error)text+=' '+(yandexErrors[y.error]||'Не удалось обновить историю Яндекса.');
+  if(y.stale&&y.enabled)text+=' Последняя проверка устарела.';
+  el('yandex-state').textContent=text;
+  el('yandex-observation').textContent=y.last_poll_at?'Последняя проверка: '+exportDate(y.last_poll_at)+' · история хранится '+y.retention_days+' дней.':'';
 }
 function renderExportList(id,jobs,emptyText){
   const list=el(id);list.replaceChildren();
@@ -56,6 +72,7 @@ function renderExports(){
     }else el('export-progress').textContent=j.status==='cancelled'?'Сбор отменён. Можно создать новый архив.':'Не удалось создать архив: '+(j.error||'ошибка сбора');
   }else el('export-progress').textContent='Архив ещё не создавался.';
   renderSchedule();
+  renderYandex();
   renderExportList('automatic-export-list',jobs.filter(j=>j.status==='ready'&&j.kind==='automatic'),'Автоархивов пока нет. Первый появится после сбора по расписанию.');
   renderExportList('export-list',jobs.filter(j=>j.status==='ready'&&j.kind!=='automatic'),'Ручных архивов пока нет. Нажмите «Собрать ZIP-архив».');
   notice(status.demo?'Демонстрационный режим: ZIP содержит тестовые данные, без подключения к вашей установке HA.':status.available?'История и события: 24 часа. Логи: за всё доступное время.':'Home Assistant недоступен. Для сбора нужен Live-профиль дополнения с доступом к Supervisor API.');
@@ -134,6 +151,21 @@ el('export-schedule-form').addEventListener('submit',async event=>{
     scheduleDirty=false;await refresh();notice('Расписание сохранено. Оно действует без перезапуска дополнения.');
   }catch(error){notice(error.message);}finally{scheduleSaving=false;el('schedule-enabled').disabled=false;el('schedule-time').disabled=false;el('save-export-schedule').disabled=!scheduleDirty;}
 });
+['yandex-enabled','yandex-token','yandex-poll','yandex-retention'].forEach(id=>el(id).addEventListener('input',()=>{yandexDirty=true;el('save-yandex').disabled=yandexSaving||!(status.yandex||{}).available;}));
+el('yandex-form').addEventListener('submit',async event=>{
+  event.preventDefault();yandexSaving=true;el('save-yandex').disabled=true;
+  const token=el('yandex-token');
+  const settings={enabled:el('yandex-enabled').checked,poll_seconds:Number(el('yandex-poll').value),retention_days:Number(el('yandex-retention').value)};
+  if(token.value)settings.token=token.value;
+  token.value='';renderYandex();
+  try{
+    const response=await fetch('api/yandex',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(settings),cache:'no-store'});
+    settings.token=null;
+    const result=await response.json();
+    if(!response.ok)throw Error(yandexErrors[result.error]||'Не удалось сохранить подключение Яндекса.');
+    yandexDirty=false;await refresh();notice('Подключение Яндекса сохранено. Настройки действуют без перезапуска.');
+  }catch(error){notice(error.message);}finally{settings.token=null;token.value='';yandexSaving=false;renderYandex();}
+});
 document.querySelector('[data-tab=status]').classList.add('active');refresh().catch(e=>notice(e.message));
 
 document.getElementById('tunnel-form').addEventListener('submit',async event=>{
@@ -146,4 +178,4 @@ document.getElementById('tunnel-form').addEventListener('submit',async event=>{
     await refresh();notice('Туннель сохранён. Перезапустите HA-Diagnostics на странице приложения в Home Assistant.');
   }catch(error){notice(error.message);}finally{key.value='';save.disabled=!(status.tunnel||{}).available;}
 });
-document.addEventListener('visibilitychange',()=>{if(document.hidden)el('tunnel-key').value='';});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){el('tunnel-key').value='';el('yandex-token').value='';}});

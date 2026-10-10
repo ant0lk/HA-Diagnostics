@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## 1.0.0-alpha.6 — 2026-10-10
+
+Alpha 6: опциональное подключение умного дома Яндекса с токеном `iot:view` через локальную панель. Все добавленные устройства проверяются только фиксированными GET-чтениями; история online/offline, unknown/пропуски, удаление и возврат устройств сохраняются между перезапусками. По умолчанию опрос 60 секунд и хранение 30 дней, оба параметра меняются без перезапуска. Каждый ручной/ежедневный ZIP получает `yandex/devices.json`, `availability_history.json` и `coverage.json` с периодом наблюдения, ошибками и ограничениями. Токен и исходные названия/ID устройств исключены из истории и ZIP. Время перехода ограничено интервалом между проверками; история до подключения отсутствует. Подключение реального аккаунта и работа на HA OS требуют приёмки.
+
 ## 1.0.0-alpha.5 — 2026-10-09
 
 ZIP includes retained automation/script traces, Repairs, notifications, System Health/System Log, device diagnostics, floor/label registries, host services/disk/swap and Supervisor jobs/repositories. Recorder metadata/issues and up to 64 daily statistic series for seven days are exported. Referenced blueprints, YAML dashboards and literal Jinja imports are read without execution. Host overview JSON/TXT, previous-archive comparison (including Alpha 4), observed coverage and pseudonymized network traits are included. Read operations and limits remain fixed; missing API/data is explicit. No background event/load collection. HA OS acceptance remains unverified.

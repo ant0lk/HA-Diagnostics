@@ -27,7 +27,7 @@ async def test_real_sdk_http_initialize_list_and_call(context):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),base_url='http://127.0.0.1:8000') as c:
             r=await c.post('/mcp',headers=headers,json={'jsonrpc':'2.0','id':1,'method':'initialize','params':{'protocolVersion':'2025-11-25','capabilities':{},'clientInfo':{'name':'test','version':'1'}}})
             assert r.status_code==200,r.text
-            assert r.json()['result']['serverInfo']['version']=='1.0.0-alpha.5'
+            assert r.json()['result']['serverInfo']['version']=='1.0.0-alpha.6'
             listed=await c.post('/mcp',headers=headers,json={'jsonrpc':'2.0','id':2,'method':'tools/list','params':{}})
             assert len(listed.json()['result']['tools'])==10
             denied=await c.post('/mcp',headers=headers,json={'jsonrpc':'2.0','id':3,'method':'tools/call','params':{'name':'get_diagnostics_status','arguments':{}}})

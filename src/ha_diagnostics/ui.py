@@ -100,6 +100,25 @@ def create_ui(admin_client, *, gate, web_dir, audit_path=None, transport_client=
             return JSONResponse(result,headers={"Cache-Control":"no-store"})
         except Exception:
             return JSONResponse({"error":"TUNNEL_SETTINGS_REJECTED"},status_code=400,headers={"Cache-Control":"no-store"})
+    async def save_yandex(request):
+        if not gate.write_allowed(request):return JSONResponse({"error":"ACCESS_DENIED"},status_code=403)
+        raw=bytearray()
+        async for chunk in request.stream():
+            raw.extend(chunk)
+            if len(raw)>16384:return JSONResponse({"error":"SETTINGS_TOO_LARGE"},status_code=413)
+        try:
+            from .ipc import _json_loads
+            from .yandex_history import YandexArgs
+            data=_json_loads(bytes(raw))
+            YandexArgs.model_validate(data)
+            result=await admin_client.request("set_yandex",data)
+            return JSONResponse(result,headers={"Cache-Control":"no-store"})
+        except Exception as error:
+            from .broker import BrokerError
+            from .ipc import IPCError
+            code=error.code if isinstance(error,(BrokerError,IPCError)) and error.code in {
+                "YANDEX_TOKEN_REQUIRED","YANDEX_SAVE_FAILED","YANDEX_STORAGE_UNAVAILABLE","YANDEX_DEMO_DISABLED"} else "YANDEX_SETTINGS_REJECTED"
+            return JSONResponse({"error":code},status_code=503 if code in {"YANDEX_SAVE_FAILED","YANDEX_STORAGE_UNAVAILABLE"} else 400,headers={"Cache-Control":"no-store"})
     async def action(request):
         if not gate.write_allowed(request): return JSONResponse({"error":"ACCESS_DENIED"},status_code=403)
         # Stream bound before JSON parsing; do not read unbounded request.body().
@@ -120,4 +139,4 @@ def create_ui(admin_client, *, gate, web_dir, audit_path=None, transport_client=
                 code=409 if exc.code=="EXPORT_BUSY" else 507 if exc.code=="DISK_LOW" else 503
                 return JSONResponse({"error":exc.code},status_code=code,headers={"Cache-Control":"no-store"})
             return JSONResponse({"error":"ADMIN_REQUEST_REJECTED"},status_code=400)
-    return Starlette(routes=[Route("/",index),Route("/app.js",asset),Route("/style.css",asset),Route("/api/status",status),Route("/api/exports/{export_id}/download",download_export),Route("/api/tunnel",save_tunnel,methods=["POST"]),Route("/api/action",action,methods=["POST"])])
+    return Starlette(routes=[Route("/",index),Route("/app.js",asset),Route("/style.css",asset),Route("/api/status",status),Route("/api/exports/{export_id}/download",download_export),Route("/api/tunnel",save_tunnel,methods=["POST"]),Route("/api/yandex",save_yandex,methods=["POST"]),Route("/api/action",action,methods=["POST"])])

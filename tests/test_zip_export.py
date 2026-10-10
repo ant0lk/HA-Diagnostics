@@ -390,7 +390,7 @@ def test_zip_bootstrap_runs_only_export_and_ui_with_token_fd_separated(tmp_path,
 
 def test_published_zip_sources_and_ui_match_main_sources():
     root = Path(__file__).resolve().parents[1]
-    for name in ("runtime.py", "ui.py", "ipc.py", "exporter.py", "export_sources.py", "export_schedule.py", "export_configuration.py", "export_insights.py"):
+    for name in ("runtime.py", "ui.py", "ipc.py", "exporter.py", "export_sources.py", "export_schedule.py", "export_configuration.py", "export_insights.py", "yandex_history.py"):
         assert (root / "src/ha_diagnostics" / name).read_bytes() == (
             root / "ha_diagnostics_live/app/src/ha_diagnostics" / name).read_bytes(), name
     for name in ("index.html", "app.js", "style.css"):

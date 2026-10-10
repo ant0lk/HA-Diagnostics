@@ -1,0 +1,61 @@
+{
+  "product_version": "1.0.0-alpha.5",
+  "date": "2026-10-10",
+  "environment": {
+    "python": "3.12.14",
+    "sqlite": "3.53.1",
+    "platform": "win32"
+  },
+  "pytest": {
+    "tests": 361,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 2,
+    "passed": 359,
+    "seconds": 40.297,
+    "junit_sha256": "042a40aee02a53cf26d4bced4b753ad7b7a181008b30e1d0519df3b9a964fbd8"
+  },
+  "yandex_contracts": {
+    "api": "synthetic",
+    "devices": "synthetic",
+    "clock": "synthetic",
+    "checks": [
+      "compressed online/offline transitions and uncertainty windows",
+      "API and per-device failures are unknown, never inferred offline",
+      "restart, delay, pause and recovery gaps",
+      "complete catalog removal, readdition and rename",
+      "separate sessions for replacement tokens",
+      "bounded retention and capacity evictions",
+      "credentials excluded from status, stored history and ZIP",
+      "fixed GET routes, no redirects, response limits and rate backoff",
+      "owner/CSRF/IPC restrictions",
+      "manual and daily ZIP history inclusion",
+      "corrupt optional database preserves the HA ZIP"
+    ]
+  },
+  "browser": {
+    "mode": "local synthetic HA and Yandex APIs",
+    "connection_saved": true,
+    "secret_field_cleared": true,
+    "desktop_viewport": [
+      1280,
+      720
+    ],
+    "mobile_viewport": [
+      360,
+      800
+    ],
+    "mobile_horizontal_overflow": false,
+    "downloaded_zip_source_checksums_verified": 117,
+    "downloaded_yandex_device_events": 2,
+    "console_errors": 0,
+    "screenshot": ".test-results/yandex-panel.jpg"
+  },
+  "published_app_checksums_verified": 72,
+  "unverified": [
+    "real Yandex account OAuth token and cloud reads",
+    "live HA OS installation, restart and Ingress",
+    "real cloud rate limits and large accounts"
+  ],
+  "git_commit_push_or_publication_performed": false
+}

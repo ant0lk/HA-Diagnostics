@@ -10,7 +10,7 @@
   <header>
     <div class="logo" aria-hidden="true">HA<span>·</span>D</div>
     <div><h1>HA-Diagnostics</h1><p>Диагностика Home Assistant · только чтение</p></div>
-    <span class="badge">1.0.0-alpha.7</span>
+    <span class="badge">1.0.0-alpha.8</span>
   </header>
   <main>
     <nav class="page-tabs" role="tablist" aria-label="Разделы дополнения">
@@ -32,7 +32,7 @@
           <div class="card"><strong>Только чтение</strong><p>Дополнение читает диагностические данные. Настройки подключения и сбора управляются из локальной панели.</p></div>
           <div class="card"><strong>Данные под вашим контролем</strong><p>Архивы хранятся в дополнении. Распознаваемые секреты удаляются до записи в ZIP; результаты чтения и пробелы указаны внутри каждого архива.</p></div>
         </div>
-        <div class="about-runtime"><h3>Состояние дополнения</h3><p id="addon-state">Загрузка сведений…</p><p>Версия <span id="addon-version">1.0.0-alpha.7</span> · Home Assistant OS</p></div>
+        <div class="about-runtime"><h3>Состояние дополнения</h3><p id="addon-state">Загрузка сведений…</p><p>Версия <span id="addon-version">1.0.0-alpha.8</span> · Home Assistant OS</p></div>
         <div data-workflow="legacy" hidden>
 <details class="legacy-card"><summary>Подключение ChatGPT</summary><p>Подключите домашний MCP через Secure MCP Tunnel. Сначала создайте туннель в OpenAI Platform, затем сохраните его параметры здесь.</p><form id="tunnel-form" autocomplete="off"><label for="tunnel-id">Tunnel ID</label><input id="tunnel-id" name="tunnel-id" type="text" placeholder="tunnel_…" maxlength="107" required pattern="tunnel_[a-zA-Z0-9]{8,100}" spellcheck="false" autocomplete="off"><label for="tunnel-key">Runtime API key туннеля</label><input id="tunnel-key" name="tunnel-key" type="password" maxlength="8192" required autocomplete="new-password" spellcheck="false"><p>Ключ сохраняется локально и не показывается повторно. Это ключ транспорта OpenAI, а не токен Home Assistant. Для замены введите новый ключ.</p><button id="save-tunnel" type="submit">Сохранить туннель</button></form><p id="tunnel-state" role="status" aria-live="polite"></p><p>После сохранения перезапустите HA-Diagnostics через страницу приложения в Home Assistant. Затем выберите этот туннель при создании MCP в ChatGPT.</p><p>OAuth настраивается отдельно. Сохранение туннеля не включает удалённый доступ и не подтверждает подключение ChatGPT.</p><p id="transport-state"></p><button id="revoke">Отключить доступ ChatGPT</button></details>
 <details class="legacy-card"><summary>Доступ и приватность</summary><p>Очистка уменьшает раскрытие, но не гарантирует удаление любого неизвестного секрета. Уже отправленные сведения остаются в чате по условиям аккаунта OpenAI. Отзыв действует на следующие вызовы.</p><label>Настройки этого приложения (без секретов)<textarea id="policy" spellcheck="false" rows="18"></textarea></label><button id="save-policy">Сохранить локально</button><p>OAuth subject владельца подтверждается локально. MCP не имеет права менять настройки.</p></details>
@@ -101,6 +101,13 @@
         </details>
         </details>
         <div class="history-heading"><h3>История событий</h3><button id="refresh-yandex-events">Обновить</button></div>
+        <label class="history-filter" for="yandex-event-filter">Сравнение с Home Assistant
+          <select id="yandex-event-filter">
+            <option value="all">Все события</option>
+            <option value="match">Статусы совпадают</option>
+            <option value="mismatch">Статусы отличаются</option>
+          </select>
+        </label>
         <p id="yandex-history-note" class="export-note">События «онлайн» и «оффлайн», сначала новые. Время соответствует проверке статуса.</p>
         <p id="yandex-history-state" role="status" aria-live="polite"></p>
         <div id="yandex-event-list" class="event-list"></div>

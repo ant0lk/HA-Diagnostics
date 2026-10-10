@@ -14,7 +14,7 @@ import re
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "1.0.0-alpha.7"
+VERSION = "1.0.0-alpha.8"
 ROOT_FILES = {".gitignore", "README.md", "CHANGELOG.md", "Dockerfile.import", "pyproject.toml",
               "repository.yaml", "requirements.in", "requirements.lock", "requirements-dev.in",
               "requirements-dev.lock", "supply-chain.lock.json"}

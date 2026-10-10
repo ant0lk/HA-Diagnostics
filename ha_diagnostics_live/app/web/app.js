@@ -3,6 +3,8 @@ let status, csrf, previewId, exportPoll, currentExport;
 let scheduleDirty=false, scheduleSaving=false;
 let yandexDirty=false, yandexSaving=false;
 let activeTab='home', yandexEvents=[], yandexSession, yandexNext, yandexEventsLoading=false;
+let yandexFilter='all', yandexHistoryRevision, yandexEventGeneration=0, yandexRefreshQueued=false;
+let yandexHistoryPending=0, yandexBackfillTimer;
 let matchingData, matchingLoading=false, ruleDirty=false, haEditor, haEditorGeneration=0;
 const el=id=>document.getElementById(id);
 function notice(text){el('notice').textContent=text;}
@@ -86,8 +88,8 @@ function renderYandexEvents(){
     comparison.textContent=comparisonText(event);info.append(comparison);
     if(event.ha_observed_at){
       const observation=document.createElement('small');observation.className='comparison-observation';
-      observation.textContent='HA проверен: '+timeFormat.format(new Date(event.ha_observed_at))+(event.ha_name?' · '+event.ha_name:'');
-      observation.title=exportDate(event.ha_observed_at);info.append(observation);
+      observation.textContent=(event.ha_origin==='history'?'История HA на ':'HA проверен: ')+timeFormat.format(new Date(event.ha_observed_at))+(event.ha_name?' · '+event.ha_name:'');
+      observation.title=exportDate(event.ha_observed_at)+(event.ha_retrieved_at?' · дополнено '+exportDate(event.ha_retrieved_at):'');info.append(observation);
     }
     if(event.kind==='comparison'){
       const source=document.createElement('small');source.className='comparison-observation';source.textContent='Изменение доступности или привязки HA';info.append(source);
@@ -96,9 +98,11 @@ function renderYandexEvents(){
     row.append(info,time);group.append(row);
   }
   el('more-yandex-events').hidden=!yandexNext;
-  el('yandex-history-state').textContent=yandexEvents.length?'':(status.yandex||{}).configured?'Событий пока нет. Они появятся после проверки статусов устройств.':'Подключите Яндекс и включите сбор, чтобы видеть события устройств.';
+  const emptyText=yandexFilter==='all'?'Событий пока нет. Они появятся после проверки статусов устройств.':yandexFilter==='match'?'Событий с совпадающими статусами нет.':'Событий с отличающимися статусами нет.';
+  el('yandex-history-state').textContent=yandexHistoryPending?'Дополняем старые события по истории HA: '+yandexHistoryPending+'.':yandexEvents.length?'':(status.yandex||{}).configured?emptyText:'Подключите Яндекс и включите сбор, чтобы видеть события устройств.';
 }
 const haReasons={HA_ENTITY_MISSING:'Объект HA не найден',HA_ENTITY_NOT_FOUND:'Объект HA не найден или HA недоступен',HA_SOURCE_UNAVAILABLE:'Не удалось прочитать Home Assistant',HA_CATALOG_INVALID:'Не удалось прочитать реестр HA',HA_STATES_INVALID:'Не удалось прочитать состояния HA',HA_ENTITY_LIMIT:'В HA больше 5000 объектов: сопоставление временно недоступно',HA_NOT_OBSERVED:'Статус HA тогда не собирался',HA_OBSERVATION_STALE:'Проверка HA устарела',HA_UNKNOWN_STATE:'У HA нет достоверного состояния',HA_OUTSIDE_RETENTION:'Проверка HA вне срока хранения',YANDEX_IDENTITY_CHANGED:'ID у поставщика изменился — подтвердите привязку заново',YANDEX_CONNECTION_CHANGED:'Подключение Яндекса изменилось. Обновите список устройств.',YANDEX_CANDIDATE_CHANGED:'Предложение изменилось. Обновите подбор.',YANDEX_SKILL_NOT_FOUND:'Навык больше не найден. Обновите устройства.'};
+Object.assign(haReasons,{HA_HISTORY_PENDING:'Читаем историю HA на время события',HA_HISTORY_EMPTY:'В истории HA нет данных на это время',HA_HISTORY_UNAVAILABLE:'Не удалось прочитать историю HA',HA_HISTORY_INVALID:'Не удалось определить исторический статус HA',HA_HISTORY_LIMIT:'История HA превысила предел чтения'});
 function comparisonText(value){
   if(value.comparison==='unlinked')return 'Home Assistant: устройство не связано';
   const availability={available:'доступно',unavailable:'недоступно',unknown:'нет данных'}[value.ha_status]||'нет данных';
@@ -221,29 +225,45 @@ async function openHaLink(device,method){
   if(generation===haEditorGeneration)renderHaChoices();
 }
 async function refreshYandexEvents(more=false){
-  if(yandexEventsLoading)return;
+  if(yandexEventsLoading){if(!more)yandexRefreshQueued=true;return;}
   if(status.workflow!=='zip_export'){
     el('yandex-history-state').textContent='История Яндекса доступна в профиле диагностического ZIP.';return;
   }
   yandexEventsLoading=true;el('refresh-yandex-events').disabled=true;el('more-yandex-events').disabled=true;
+  const generation=yandexEventGeneration;
   if(!yandexEvents.length)el('yandex-history-state').textContent='Загрузка событий…';
   try{
-    const query=more&&yandexNext?'?before_event_id='+encodeURIComponent(yandexNext):'';
-    const response=await fetch('api/yandex/events'+query,{cache:'no-store'});
+    const query=new URLSearchParams({comparison:yandexFilter});
+    if(more&&yandexNext)query.set('before_event_id',yandexNext);
+    const response=await fetch('api/yandex/events?'+query,{cache:'no-store'});
     if(!response.ok)throw Error('Не удалось загрузить историю. Попробуйте обновить её.');
     const feed=await response.json(),incoming=feed.events||[];
+    if(generation!==yandexEventGeneration)return;
     const sameSession=yandexSession===feed.session_id;
+    const sameRevision=yandexHistoryRevision===feed.history_revision;
+    // Backfill can alter older loaded pages and their filter membership.
+    // Restart pagination when those comparisons change.
+    if(more&&(!sameSession||!sameRevision)){yandexRefreshQueued=true;return;}
     // A full new page with no overlap means more than a page changed between
     // refreshes. Restart pagination so a gap cannot be hidden in the list.
     const overlap=incoming.some(event=>yandexEvents.some(old=>old.event_id===event.event_id));
-    const retain=sameSession&&(more||overlap);
+    const retain=sameSession&&sameRevision&&(more||overlap);
     const events=new Map((retain?yandexEvents:[]).map(event=>[event.event_id,event]));
     for(const event of incoming)if(['online','offline'].includes(event.status))events.set(event.event_id,event);
     yandexEvents=[...events.values()].filter(event=>event.observed_at>=feed.retained_from).sort((a,b)=>b.event_id-a.event_id);
     if(more||!retain)yandexNext=feed.next_before_event_id;
-    yandexSession=feed.session_id;renderYandexEvents();
-  }catch(error){el('yandex-history-state').textContent=error.message;}
-  finally{yandexEventsLoading=false;el('refresh-yandex-events').disabled=false;el('more-yandex-events').disabled=false;}
+    yandexSession=feed.session_id;yandexHistoryRevision=feed.history_revision;yandexHistoryPending=feed.history_pending||0;renderYandexEvents();
+    clearTimeout(yandexBackfillTimer);
+    if(yandexHistoryPending)yandexBackfillTimer=setTimeout(()=>{if(activeTab==='yandex')refreshYandexEvents();},2000);
+  }catch(error){if(generation===yandexEventGeneration)el('yandex-history-state').textContent=error.message;}
+  finally{
+    yandexEventsLoading=false;el('refresh-yandex-events').disabled=false;el('more-yandex-events').disabled=false;
+    if(yandexRefreshQueued){yandexRefreshQueued=false;refreshYandexEvents();}
+  }
+}
+function resetYandexEvents(){
+  yandexEventGeneration++;yandexEvents=[];yandexNext=null;yandexHistoryRevision=undefined;
+  renderYandexEvents();return refreshYandexEvents();
 }
 function renderExportList(id,jobs,emptyText){
   const list=el(id);list.replaceChildren();
@@ -352,8 +372,9 @@ bind('refresh-audit',refresh);
 bind('create-zip',async()=>{el('create-zip').disabled=true;try{await action('start_export',{history_hours:24});await refresh();}catch(error){el('create-zip').disabled=false;throw error;}});
 bind('cancel-zip',async()=>{if(currentExport){await action('cancel_export',{export_id:currentExport.export_id});await refresh();}});
 bind('refresh-zip',refresh);
-bind('refresh-yandex-events',async()=>{yandexEvents=[];yandexNext=null;await refreshYandexEvents();});
+bind('refresh-yandex-events',resetYandexEvents);
 bind('more-yandex-events',async()=>{await refreshYandexEvents(true);});
+el('yandex-event-filter').addEventListener('change',()=>{yandexFilter=el('yandex-event-filter').value;resetYandexEvents();});
 bind('refresh-yandex-links',refreshYandexLinks);
 el('yandex-device-search').addEventListener('input',renderYandexLinks);
 el('yandex-rule-skill').addEventListener('change',()=>{ruleDirty=true;updateIdentityRule();});
@@ -362,7 +383,7 @@ el('yandex-rule-form').addEventListener('submit',async event=>{
   event.preventDefault();el('save-yandex-rule').disabled=true;
   try{
     await matchingAction('set_yandex_identity_rule',{session_id:matchingData.session_id,skill_id:el('yandex-rule-skill').value,external_prefix:el('yandex-rule-prefix').value,enabled:true});
-    ruleDirty=false;await refreshYandexLinks();notice('Правило сохранено. Устройства с подходящими ID связываются автоматически. Ручные привязки сохранены.');
+    ruleDirty=false;await refreshYandexLinks();await refreshYandexEvents();notice('Правило сохранено. Подходящие устройства связываются автоматически; старые события дополняются по истории HA.');
   }catch(error){notice(error.message);}finally{el('save-yandex-rule').disabled=false;}
 });
 bind('delete-yandex-rule',async()=>{
@@ -378,7 +399,7 @@ el('ha-link-form').addEventListener('submit',async event=>{
   event.preventDefault();if(!haEditor)return;el('confirm-ha-link').disabled=true;
   try{
     await matchingAction('set_yandex_link',{session_id:haEditor.session_id,device_ref:haEditor.device.device_ref,entity_ref:el('ha-entity-select').value,method:haEditor.method});
-    el('ha-link-dialog').close();await refreshYandexLinks();notice('Связь сохранена. Следующая проверка добавит сравнение в историю; старые события сохраняют прежние данные.');
+    el('ha-link-dialog').close();await refreshYandexLinks();await refreshYandexEvents();notice('Связь сохранена. Старые события дополняются статусом из истории Home Assistant на время события.');
   }catch(error){el('ha-link-state').textContent=error.message;}finally{updateHaChoice();}
 });
 ['schedule-enabled','schedule-time'].forEach(id=>el(id).addEventListener('input',()=>{scheduleDirty=true;el('save-export-schedule').disabled=scheduleSaving;}));

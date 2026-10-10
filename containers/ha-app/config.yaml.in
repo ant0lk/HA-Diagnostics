@@ -1,5 +1,5 @@
 name: HA-Diagnostics — Import
-version: 1.0.0-alpha.7
+version: 1.0.0-alpha.8
 slug: ha_diagnostics
 description: Локальный импорт и диагностика очищенных данных. Предварительная alpha.
 url: https://github.com/ant0lk/HA-Diagnostics

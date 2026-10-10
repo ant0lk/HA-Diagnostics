@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 from .broker import BrokerError
 from .ipc import _json_loads
 from .yandex_matching import HomeAssistantMatcher
+from .yandex_backfill import AvailabilityBackfill
 
 API_ORIGIN = "https://api.iot.yandex.net"
 DEVICE_ID = r"[A-Za-z0-9_-]{1,200}"
@@ -40,6 +41,7 @@ class YandexEventsArgs(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, hide_input_in_errors=True)
     before_event_id: int | None = Field(default=None, ge=1, le=2**63 - 1)
     limit: int = Field(default=MAX_UI_EVENTS, ge=1, le=MAX_UI_EVENTS)
+    comparison: str = Field(default="all", pattern=r"^(all|match|mismatch)$")
 
 
 class YandexArgs(BaseModel):
@@ -337,15 +339,20 @@ class AvailabilityStore:
               ON d.session_id=e.session_id AND d.device_ref=e.device_ref
             LEFT JOIN local_ui.labels l
               ON l.session_id=e.session_id AND l.device_ref=e.device_ref
+            LEFT JOIN ha_comparisons c ON c.event_id=e.event_id
             WHERE e.session_id=? AND e.status IN ('online','offline') AND e.observed_at>=?
               AND (? IS NULL OR e.event_id<?)
+              AND (?='all' OR c.comparison=?)
             ORDER BY e.event_id DESC LIMIT ?""",
-            (settings.session_id, cutoff, args.before_event_id, args.before_event_id, args.limit + 1)).fetchall()
+            (settings.session_id, cutoff, args.before_event_id, args.before_event_id,
+             args.comparison, args.comparison, args.limit + 1)).fetchall()
         events = [dict(row) for row in rows[:args.limit]]
         if hasattr(self, "matcher"):
             for event in events:
                 event.update(self.matcher.event_comparison(event["event_id"], labels=True))
         return {"events": events, "session_id": settings.session_id, "retained_from": cutoff,
+            "comparison": args.comparison, "history_revision": int(self.meta("ha_history_revision") or 0),
+            "history_pending": self.db.execute("SELECT COUNT(*) FROM ha_comparisons c JOIN events e ON e.event_id=c.event_id WHERE e.session_id=? AND e.observed_at>=? AND c.ha_reason='HA_HISTORY_PENDING'", (settings.session_id, cutoff)).fetchone()[0],
             "next_before_event_id": events[-1]["event_id"] if len(rows) > args.limit else None}
 
     def snapshot(self, settings, now):
@@ -383,7 +390,7 @@ class AvailabilityStore:
             if gap["is_open"]:
                 gap["to_at"] = stamp(now)
         return {"devices": devices, "events": events, "coverage": {
-            "schema_version": 2, "enabled": settings.enabled, "configured": settings.token is not None,
+            "schema_version": 3, "enabled": settings.enabled, "configured": settings.token is not None,
             "session_id": settings.session_id, "poll_seconds": settings.poll_seconds,
             "retention_days": settings.retention_days, "retained_from": cutoff, "exported_at": stamp(now),
             "last_poll_at": self.meta("last_poll_at"), "last_successful_poll_at": self.meta("last_successful_poll_at"),
@@ -397,6 +404,8 @@ class AvailabilityStore:
                 "Short changes between polls can be missed. Yandex reports cloud availability, not a direct network probe.",
                 "Unknown denotes a collection gap, not device offline. Removed denotes absence in a complete catalog.",
                 "HA comparisons use the selected entity's availability at its recorded observation time, not today's state.",
+                "After a late link, previously unlinked events use Recorder history effective at observed_at; ha_origin=history and ha_retrieved_at mark this backfill.",
+                "Missing or purged HA history leaves the historical comparison unknown; existing observed HA snapshots are preserved.",
                 "Comparison events can occur while Yandex availability is unchanged. Unknown or unlinked is not a mismatch.",
                 "Each replacement token starts a separate session to avoid joining different accounts."]}}
 
@@ -428,6 +437,7 @@ class YandexHistory:
         self._retired_tokens = []
         self.matcher = HomeAssistantMatcher(self.store, self.redactor, self.clock, self.scrub_all_secrets)
         self.store.matcher = self.matcher
+        self.backfill = AvailabilityBackfill(self.matcher, lambda: self.settings)
 
     def scrub_all_secrets(self, text):
         if self.matcher.sources is not None:
@@ -577,6 +587,7 @@ class YandexHistory:
             self._settings_error = None
             self.store.prune(self.clock(), self.settings.retention_days)
             self._retry_seconds = min(3600, max(self.settings.poll_seconds, self._retry_seconds * 2, getattr(self.api, "retry_after", 0))) if errors else 0
+            self.backfill.schedule()
 
     async def _run(self):
         while True:
@@ -606,6 +617,11 @@ class YandexHistory:
 
     async def panel_events(self, args):
         # Available only through the local owner/admin channel, never MCP or ZIP.
+        if self.matcher.catalog_at is None and self.store.db.execute(
+                "SELECT 1 FROM local_ui.ha_links WHERE session_id=? AND entity_ref IS NOT NULL LIMIT 1",
+                (self.settings.session_id,)).fetchone():
+            await self.matcher.refresh()
+        self.backfill.schedule()
         value = self.store.panel_events(self.settings, self.clock(), args)
         for event in value["events"]:
             for key in ("device_name", "home_name", "room_name", "ha_name"):
@@ -616,7 +632,9 @@ class YandexHistory:
     async def panel_links(self, args):
         await self.matcher.refresh()
         self.store.prune(self.clock(), self.settings.retention_days)
-        return self.matcher.panel(self.settings)
+        value = self.matcher.panel(self.settings)
+        self.backfill.schedule()
+        return value
 
     async def candidates(self, args):
         if args.session_id != self.settings.session_id:
@@ -628,12 +646,14 @@ class YandexHistory:
     async def set_link(self, args):
         await self.matcher.refresh()
         self.matcher.set_link(args, self.settings.session_id)
+        self.backfill.schedule()
         self._changed.set()
         return {"saved": True}
 
     async def set_identity_rule(self, args):
         await self.matcher.refresh()
         self.matcher.set_rule(args, self.settings.session_id)
+        self.backfill.schedule()
         self._changed.set()
         return {"saved": True}
 
@@ -641,6 +661,7 @@ class YandexHistory:
         if self._task and not self._task.done():
             self._task.cancel()
             await asyncio.gather(self._task, return_exceptions=True)
+        await self.backfill.close()
         if self.api is not None:
             await self.api.close()
         self.store.close()

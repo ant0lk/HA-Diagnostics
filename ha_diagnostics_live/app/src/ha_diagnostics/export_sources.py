@@ -126,6 +126,13 @@ class ExportSources:
             if match and params == {"end_time": params.get("end_time")}:
                 history_interval(match[2], params["end_time"])
                 return
+            if (match and match[1] == "history/period"
+                    and set(params) == {"end_time", "filter_entity_id", "significant_changes_only"}
+                    and params["significant_changes_only"] == "0"
+                    and isinstance(params["filter_entity_id"], str)
+                    and re.fullmatch(r"[a-z_][a-z0-9_]*\.[a-z0-9_]{1,255}", params["filter_entity_id"])):
+                history_interval(match[2], params["end_time"])
+                return
         raise BrokerError("OPERATION_DENIED")
 
     @staticmethod
@@ -232,6 +239,12 @@ class ExportSources:
         history_interval(start, end)
         prefix = "history/period" if kind == "history" else "logbook"
         return await self._json(f"/core/api/{prefix}/{start}", {"end_time": end})
+
+    async def entity_history(self, entity_id: str, start: str, end: str):
+        # One selected entity, at most one hour, including the initial state
+        # and attribute changes (assumed_state / connectivity can change).
+        return await self._json(f"/core/api/history/period/{start}", {
+            "end_time": end, "filter_entity_id": entity_id, "significant_changes_only": "0"})
 
     async def logs(self, source: str) -> AsyncIterator[bytes]:
         if source in LOG_SOURCES:
@@ -424,6 +437,9 @@ class DemoExportSources:
         if kind == "history":
             return [[{"entity_id": "sensor.demo", "state": "unavailable", "last_changed": start}]]
         return [{"when": start, "entity_id": "sensor.demo", "message": "Demo device unavailable"}]
+
+    async def entity_history(self, entity_id, start, end):
+        return []
 
     async def logs(self, source):
         now = datetime.now(timezone.utc).isoformat()

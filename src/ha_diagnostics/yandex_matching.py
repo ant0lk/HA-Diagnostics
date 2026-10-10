@@ -23,6 +23,23 @@ MAX_HA_ENTITIES = 5000
 REGISTRY_SECONDS = 300
 
 
+def availability(row, domain):
+    """The same interpretation for current states and full Recorder states."""
+    if row is None:
+        return "unknown", "HA_ENTITY_MISSING"
+    attrs = row.get("attributes", {})
+    attrs = attrs if isinstance(attrs, dict) else {}
+    state = row.get("state")
+    connectivity = attrs.get("device_class") == "connectivity" and domain == "binary_sensor"
+    if not isinstance(state, str) or not state or state == "unknown" or attrs.get("assumed_state") is True:
+        return "unknown", "HA_UNKNOWN_STATE"
+    if state == "unavailable" or connectivity and state == "off":
+        return "unavailable", None
+    if not connectivity or state == "on":
+        return "available", None
+    return "unknown", "HA_UNKNOWN_STATE"
+
+
 def timestamp(now):
     return now.isoformat(timespec="microseconds").replace("+00:00", "Z")
 
@@ -89,6 +106,12 @@ class HomeAssistantMatcher:
             CREATE TABLE IF NOT EXISTS local_ui.comparison_labels (
               event_id INTEGER PRIMARY KEY, ha_name TEXT);
         """)
+        columns = {row[1] for row in self.db.execute("PRAGMA table_info(ha_comparisons)")}
+        with self.db:
+            if "ha_origin" not in columns:
+                self.db.execute("ALTER TABLE ha_comparisons ADD COLUMN ha_origin TEXT NOT NULL DEFAULT 'observed'")
+            if "ha_retrieved_at" not in columns:
+                self.db.execute("ALTER TABLE ha_comparisons ADD COLUMN ha_retrieved_at TEXT")
 
     def label(self, value):
         return self.scrub(value)[:256] if isinstance(value, str) and value else None
@@ -130,19 +153,8 @@ class HomeAssistantMatcher:
                         attrs = attrs if isinstance(attrs, dict) else {}
                         if attrs.get("friendly_name"):
                             entity["name"] = self.label(attrs["friendly_name"]) or entity["name"]
-                        state = row.get("state") if row else None
-                        connectivity = attrs.get("device_class") == "connectivity" and entity["domain"] == "binary_sensor"
-                        if state is None:
-                            availability, reason = "unknown", "HA_ENTITY_MISSING"
-                        elif state == "unknown" or attrs.get("assumed_state") is True:
-                            availability, reason = "unknown", "HA_UNKNOWN_STATE"
-                        elif state == "unavailable" or connectivity and state == "off":
-                            availability, reason = "unavailable", None
-                        elif isinstance(state, str) and (not connectivity or state == "on"):
-                            availability, reason = "available", None
-                        else:
-                            availability, reason = "unknown", "HA_UNKNOWN_STATE"
-                        entity.update(ha_status=availability, reason=reason)
+                        state, reason = availability(row, entity["domain"])
+                        entity.update(ha_status=state, reason=reason)
                     self.observed_at, self.error = self.clock(), None
             except asyncio.CancelledError:
                 raise
@@ -314,15 +326,19 @@ class HomeAssistantMatcher:
         return result
 
     def record(self, event_id, comparison):
-        keys = ("ha_entity_ref", "ha_status", "ha_observed_at", "comparison", "ha_reason", "method", "mapping_revision")
-        self.db.execute("INSERT INTO ha_comparisons VALUES (?,?,?,?,?,?,?,?)", (event_id, *(comparison[key] for key in keys)))
-        self.db.execute("INSERT INTO local_ui.comparison_labels VALUES (?,?)", (event_id, comparison["ha_name"]))
+        keys = ("ha_entity_ref", "ha_status", "ha_observed_at", "comparison", "ha_reason", "method", "mapping_revision",
+                "ha_origin", "ha_retrieved_at")
+        values = {"ha_origin": "observed", "ha_retrieved_at": None, **comparison}
+        self.db.execute("INSERT OR REPLACE INTO ha_comparisons (event_id," + ",".join(keys) + ") VALUES (" +
+            ",".join("?" for _ in range(len(keys) + 1)) + ")", (event_id, *(values[key] for key in keys)))
+        self.db.execute("INSERT OR REPLACE INTO local_ui.comparison_labels VALUES (?,?)", (event_id, comparison["ha_name"]))
 
     def event_comparison(self, event_id, *, labels=False):
         row = self.db.execute("SELECT * FROM ha_comparisons WHERE event_id=?", (event_id,)).fetchone()
         if row is None:
             value = {"ha_entity_ref": None, "ha_status": "unknown", "ha_observed_at": None,
-                "comparison": "unknown", "ha_reason": "HA_NOT_OBSERVED", "method": None, "mapping_revision": None}
+                "comparison": "unknown", "ha_reason": "HA_NOT_OBSERVED", "method": None, "mapping_revision": None,
+                "ha_origin": "observed", "ha_retrieved_at": None}
             return value | {"ha_name": None} if labels else value
         value = dict(row)
         value.pop("event_id")

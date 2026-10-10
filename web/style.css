@@ -34,6 +34,7 @@ article{max-width:none;padding:28px 36px}
 .event-row time{white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--muted);font-size:14px;padding-top:1px}
 .event-comparison{margin:7px 0 0;font-size:13px;color:var(--muted);overflow-wrap:anywhere}
 .event-comparison.match{color:var(--accent)}.event-comparison.mismatch{color:#a64b13;font-weight:600}
+.history-filter{display:block;max-width:320px;font-size:13px;color:var(--muted)}.history-filter select{margin-top:6px;color:var(--text)}
 .comparison-observation{display:block;font-size:12px;margin-top:4px;overflow-wrap:anywhere}
 .matching-list{margin:16px 0 22px}.matching-device{padding:18px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
 .matching-panel{padding:18px 20px;margin:24px 0;border:1px solid var(--line);border-radius:12px;background:var(--surface)}.matching-panel>summary{cursor:pointer;font-size:17px;font-weight:650}.matching-panel .history-heading h3{font-size:18px}

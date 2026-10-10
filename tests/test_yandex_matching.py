@@ -328,14 +328,18 @@ async def test_source_failure_staleness_and_yandex_errors_are_not_mismatches(set
     assert event["comparison"] == "unknown" and event["reason"] == "YANDEX_NETWORK_ERROR"
 
 
-async def test_legacy_events_have_no_retroactive_comparison_and_retention_prunes_private_labels(setup):
+async def test_legacy_events_are_backfilled_only_when_linked_and_retention_prunes_private_labels(setup):
     history, clock, api, ha = setup
     with history.store.db:
         history.store.db.execute("DELETE FROM ha_comparisons")
         history.store.db.execute("DELETE FROM local_ui.comparison_labels")
     await history.set_link(link_args(history))
     events = (await history.panel_events(YandexEventsArgs()))["events"]
-    assert all(row["ha_reason"] == "HA_NOT_OBSERVED" and row["comparison"] == "unknown" for row in events)
+    assert all(row["comparison"] == "unknown" for row in events)
+    assert next(row for row in events if row["ha_entity_ref"])["ha_reason"] == "HA_HISTORY_PENDING"
+    assert next(row for row in events if not row["ha_entity_ref"])["ha_reason"] == "HA_NOT_OBSERVED"
+    await history.backfill.task
+    assert next(row for row in (await history.panel_events(YandexEventsArgs()))["events"] if row["ha_entity_ref"])["ha_reason"] == "HA_HISTORY_EMPTY"
     clock.advance()
     await history.poll_once()
     assert history.store.db.execute("SELECT COUNT(*) FROM local_ui.comparison_labels").fetchone()[0]
@@ -399,7 +403,7 @@ async def test_comparison_exports_only_aliases_and_never_private_identities(setu
             for private in (TOKEN, HA_TOKEN, "light.bedroom", "y-lamp", "skill-ha", "Светильник"):
                 assert private.encode() not in yandex
             events = json.loads(archive.read("yandex/availability_history.json"))
-            assert events["schema_version"] == 2 and any(event["comparison"] == "match" for event in events["events"])
+            assert events["schema_version"] == 3 and any(event["comparison"] == "match" for event in events["events"])
             assert not any("sqlite" in name or "links" in name or "identity_rules" in name for name in archive.namelist())
     finally:
         await service.close()

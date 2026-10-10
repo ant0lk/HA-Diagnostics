@@ -1,0 +1,17 @@
+{
+  "product_version": "1.0.0-alpha.8",
+  "date": "2026-10-10",
+  "pytest": {
+    "passed": 403,
+    "skipped": 2,
+    "failures": 0,
+    "errors": 0,
+    "seconds": 61.411,
+    "evidence": "alpha8-pytest.xml",
+    "sha256": "72c2802dffae7e3386eca7696928c4176ca7e1bd888118f80a869e7e92b2b07d"
+  },
+  "source_live_copies_match": true,
+  "live_yandex_account_verified": false,
+  "ha_os_install_verified": false,
+  "live_recorder_backfill_verified": false
+}

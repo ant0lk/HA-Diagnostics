@@ -8,7 +8,7 @@ import shutil
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "1.0.0-alpha.7"
+VERSION = "1.0.0-alpha.8"
 TEMPLATES = ROOT / "containers" / "ha-app"
 
 

@@ -1,6 +1,6 @@
 {
   "schema_version": "1",
-  "product_version": "1.0.0-alpha.7",
+  "product_version": "1.0.0-alpha.8",
   "tools": [
     {
       "name": "get_diagnostics_status",

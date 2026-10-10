@@ -106,11 +106,11 @@ def create_ui(admin_client, *, gate, web_dir, audit_path=None, transport_client=
         try:
             from .yandex_history import YandexEventsArgs
             params=request.query_params
-            if set(params)-{"before_event_id","limit"} or any(len(params.getlist(key))!=1 for key in params):
+            if set(params)-{"before_event_id","limit","comparison"} or any(len(params.getlist(key))!=1 for key in params):
                 raise ValueError()
-            if any(not value.isascii() or not value.isdecimal() or len(value)>19 for value in params.values()):
+            if any(not value.isascii() or not value.isdecimal() or len(value)>19 for key,value in params.items() if key!="comparison"):
                 raise ValueError()
-            args=YandexEventsArgs.model_validate({key:int(value) for key,value in params.items()})
+            args=YandexEventsArgs.model_validate({key:value if key=="comparison" else int(value) for key,value in params.items()})
         except ValueError:
             return JSONResponse({"error":"YANDEX_EVENTS_REJECTED"},status_code=400,headers={"Cache-Control":"no-store"})
         try:

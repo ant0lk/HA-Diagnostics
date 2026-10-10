@@ -906,7 +906,7 @@ class ExportService:
         if coverage["configured"] or snapshot["devices"] or snapshot["events"]:
             await self._json_source(archive, job, records, "yandex/devices", lambda: read(snapshot["devices"]))
             await self._json_source(archive, job, records, "yandex/availability_history", lambda: read({
-                "schema_version": 2, "retained_from": coverage["retained_from"],
+                "schema_version": 3, "retained_from": coverage["retained_from"],
                 "exported_at": coverage["exported_at"], "events": snapshot["events"]}))
 
     async def _build(self, job):

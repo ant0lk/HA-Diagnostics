@@ -1,22 +1,47 @@
-<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>HA-Diagnostics</title><link rel="stylesheet" href="style.css"></head><body><header><div class="logo">HA<span>·</span>D</div><div><h1>HA-Diagnostics</h1><p>Диагностика Home Assistant · только чтение</p></div><span class="badge">1.0.0-alpha.6</span></header><main><aside><button data-tab="export">Скачать диагностику</button><button data-tab="status">Состояние</button><button data-tab="sources">Источники</button><button data-tab="devices">Устройства</button><button data-tab="archive">Архив и импорт</button><button data-tab="connection">Подключение ChatGPT</button><button data-tab="privacy">Доступ и приватность</button><button data-tab="audit">Журнал обращений</button></aside><article><div id="notice" role="status" aria-live="polite">Загрузка состояния…</div><section id="export"><div class="export-heading"><span class="eyebrow">ДИАГНОСТИКА HOME ASSISTANT</span><h2>Всё для диагностики<br>в одном ZIP</h2><p>Соберите доступные логи и сведения об установке. Скачайте архив и используйте его для разбора ошибок.</p></div><div class="bundle-grid"><div class="card"><strong>Логи</strong><p>Core, Supervisor, хост, системные службы и установленные дополнения. Все сохранённые записи, доступные через API.</p></div><div class="card"><strong>Устройство и окружение</strong><p>Паспорт хоста: оборудование, CPU и память, ОС, версии и установленные дополнения. Сеть и реестры устройств, сущностей, этажей и меток.</p></div><div class="card"><strong>Конфигурация</strong><p>Настройки Home Assistant, интеграций и дополнений. YAML, используемые blueprints, панели и Jinja-макросы.</p></div><div class="card"><strong>Последние 24 часа</strong><p>История состояний, журнал событий и сведения о покрытии. Диагностика интеграций и отдельных устройств — где она доступна.</p></div><div class="card"><strong>Запуски и проблемы</strong><p>Сохранённые трассы автоматизаций и скриптов, Repairs, уведомления, проверки System Health и ошибки Core.</p></div><div class="card"><strong>Изменения и статистика</strong><p>Сравнение настроек, версий и реестров с предыдущим архивом. Метаданные и проблемы Recorder, до 64 статистических рядов за 7 дней.</p></div></div><div class="export-actions"><button id="create-zip" class="primary" disabled>Собрать ZIP-архив</button><button id="cancel-zip" hidden>Отменить сбор</button><button id="refresh-zip">Обновить</button><a id="download-zip" class="download" hidden>Скачать ZIP</a></div><div id="export-progress" role="status" aria-live="polite"></div><p class="export-note">Распознаваемые секреты удаляются до записи в архив. В ZIP включается очищенная структура конфигурации. Пароли, ключи, secrets.yaml и база данных HA исключены. configuration/index.json покажет источники настроек и пути файлов; manifest.json — результаты чтения и пробелы. ARCHIVE_STRUCTURE.txt покажет название ZIP и дерево всех его папок и файлов.</p>
-<div class="yandex-card">
-  <h3>Умный дом Яндекса</h3>
-  <p>Сохраняйте историю доступности каждого устройства: когда оно было онлайн, когда обнаружен офлайн и когда связь восстановилась. История включается в каждый новый ZIP.</p>
-  <form id="yandex-form" autocomplete="off">
-    <label class="schedule-toggle"><input id="yandex-enabled" type="checkbox"> Собирать историю Яндекса</label>
-    <label for="yandex-token">Токен Яндекс OAuth с доступом к чтению устройств <code>iot:view</code></label>
-    <input id="yandex-token" type="password" maxlength="8192" autocomplete="new-password" spellcheck="false" placeholder="Введите при первом подключении или для замены">
-    <p class="export-note">Токен сохраняется только в дополнении и не включается в ZIP. Оставьте поле пустым, чтобы использовать сохранённый токен. <a href="https://yandex.ru/dev/dialogs/smart-home/doc/ru/concepts/platform-protocol" target="_blank" rel="noopener noreferrer">Как получить доступ</a></p>
-    <div class="yandex-options">
-      <label for="yandex-poll">Проверять раз в <input id="yandex-poll" type="number" value="60" min="30" max="3600" step="1" required> секунд</label>
-      <label for="yandex-retention">Хранить историю <input id="yandex-retention" type="number" value="30" min="1" max="365" step="1" required> дней</label>
-    </div>
-    <button id="save-yandex" type="submit" disabled>Сохранить подключение</button>
-  </form>
-  <p id="yandex-state" role="status" aria-live="polite">Загрузка подключения…</p>
-  <p id="yandex-observation"></p>
-  <p class="export-note">Сбор работает при закрытой панели. История начинается после подключения. Время перехода определяется с точностью до интервала проверки; короткие отключения между проверками могут остаться незамеченными. Пропуски наблюдения записываются отдельно от офлайна. Названия и идентификаторы устройств в архиве заменяются устойчивыми псевдонимами.</p>
-</div>
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>HA-Diagnostics</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="logo" aria-hidden="true">HA<span>·</span>D</div>
+    <div><h1>HA-Diagnostics</h1><p>Диагностика Home Assistant · только чтение</p></div>
+    <span class="badge">1.0.0-alpha.7</span>
+  </header>
+  <main>
+    <nav class="page-tabs" role="tablist" aria-label="Разделы дополнения">
+      <button id="tab-home" data-tab="home" role="tab" aria-controls="home" aria-selected="true" tabindex="0" class="active">Главная</button>
+      <button id="tab-archive" data-tab="archive" role="tab" aria-controls="archive" aria-selected="false" tabindex="-1">Архив</button>
+      <button id="tab-yandex" data-tab="yandex" role="tab" aria-controls="yandex" aria-selected="false" tabindex="-1">Умный дом Яндекса</button>
+    </nav>
+    <article>
+      <div id="notice" role="status" aria-live="polite">Загрузка состояния…</div>
+      <section id="home" data-page role="tabpanel" aria-labelledby="tab-home" tabindex="0">
+        <div class="page-heading">
+          <span class="eyebrow">О ДОПОЛНЕНИИ</span>
+          <h2>Диагностика вашей установки<br>Home Assistant</h2>
+          <p>HA-Diagnostics собирает доступные сведения об установке, помогает сохранить их в архиве и разобраться в причинах ошибок.</p>
+        </div>
+        <div class="bundle-grid about-grid">
+          <div class="card"><strong>Диагностический архив</strong><p>Логи, конфигурация, сведения о системе и история состояний. Соберите ZIP вручную или настройте ежедневное сохранение.</p><button data-open-tab="archive">Открыть архив</button></div>
+          <div class="card"><strong>Умный дом Яндекса</strong><p>Сохранённая история доступности устройств. Следите за событиями «онлайн» и «оффлайн» и включайте их в диагностический ZIP.</p><button data-open-tab="yandex">Открыть интеграцию</button></div>
+          <div class="card"><strong>Только чтение</strong><p>Дополнение читает диагностические данные. Настройки подключения и сбора управляются из локальной панели.</p></div>
+          <div class="card"><strong>Данные под вашим контролем</strong><p>Архивы хранятся в дополнении. Распознаваемые секреты удаляются до записи в ZIP; результаты чтения и пробелы указаны внутри каждого архива.</p></div>
+        </div>
+        <div class="about-runtime"><h3>Состояние дополнения</h3><p id="addon-state">Загрузка сведений…</p><p>Версия <span id="addon-version">1.0.0-alpha.7</span> · Home Assistant OS</p></div>
+        <div data-workflow="legacy" hidden>
+<details class="legacy-card"><summary>Подключение ChatGPT</summary><p>Подключите домашний MCP через Secure MCP Tunnel. Сначала создайте туннель в OpenAI Platform, затем сохраните его параметры здесь.</p><form id="tunnel-form" autocomplete="off"><label for="tunnel-id">Tunnel ID</label><input id="tunnel-id" name="tunnel-id" type="text" placeholder="tunnel_…" maxlength="107" required pattern="tunnel_[a-zA-Z0-9]{8,100}" spellcheck="false" autocomplete="off"><label for="tunnel-key">Runtime API key туннеля</label><input id="tunnel-key" name="tunnel-key" type="password" maxlength="8192" required autocomplete="new-password" spellcheck="false"><p>Ключ сохраняется локально и не показывается повторно. Это ключ транспорта OpenAI, а не токен Home Assistant. Для замены введите новый ключ.</p><button id="save-tunnel" type="submit">Сохранить туннель</button></form><p id="tunnel-state" role="status" aria-live="polite"></p><p>После сохранения перезапустите HA-Diagnostics через страницу приложения в Home Assistant. Затем выберите этот туннель при создании MCP в ChatGPT.</p><p>OAuth настраивается отдельно. Сохранение туннеля не включает удалённый доступ и не подтверждает подключение ChatGPT.</p><p id="transport-state"></p><button id="revoke">Отключить доступ ChatGPT</button></details>
+<details class="legacy-card"><summary>Доступ и приватность</summary><p>Очистка уменьшает раскрытие, но не гарантирует удаление любого неизвестного секрета. Уже отправленные сведения остаются в чате по условиям аккаунта OpenAI. Отзыв действует на следующие вызовы.</p><label>Настройки этого приложения (без секретов)<textarea id="policy" spellcheck="false" rows="18"></textarea></label><button id="save-policy">Сохранить локально</button><p>OAuth subject владельца подтверждается локально. MCP не имеет права менять настройки.</p></details>
+<details class="legacy-card"><summary>Журнал обращений</summary><p>Аудит содержит субъект-псевдоним, tool, решение политики, размер и задержку. Текст чата, запрос поиска и журнал в нём не сохраняются.</p><button id="refresh-audit">Обновить</button><pre id="audit-content">Загрузка последних обращений…</pre></details>
+        </div>
+      </section>
+      <section id="archive" data-page role="tabpanel" aria-labelledby="tab-archive" tabindex="0" hidden>
+        <div id="export" data-workflow="zip_export">
+<div class="export-heading"><span class="eyebrow">ДИАГНОСТИКА HOME ASSISTANT</span><h2>Всё для диагностики<br>в одном ZIP</h2><p>Соберите доступные логи и сведения об установке. Скачайте архив и используйте его для разбора ошибок.</p></div><div class="bundle-grid"><div class="card"><strong>Логи</strong><p>Core, Supervisor, хост, системные службы и установленные дополнения. Все сохранённые записи, доступные через API.</p></div><div class="card"><strong>Устройство и окружение</strong><p>Паспорт хоста: оборудование, CPU и память, ОС, версии и установленные дополнения. Сеть и реестры устройств, сущностей, этажей и меток.</p></div><div class="card"><strong>Конфигурация</strong><p>Настройки Home Assistant, интеграций и дополнений. YAML, используемые blueprints, панели и Jinja-макросы.</p></div><div class="card"><strong>Последние 24 часа</strong><p>История состояний, журнал событий и сведения о покрытии. Диагностика интеграций и отдельных устройств — где она доступна.</p></div><div class="card"><strong>Запуски и проблемы</strong><p>Сохранённые трассы автоматизаций и скриптов, Repairs, уведомления, проверки System Health и ошибки Core.</p></div><div class="card"><strong>Изменения и статистика</strong><p>Сравнение настроек, версий и реестров с предыдущим архивом. Метаданные и проблемы Recorder, до 64 статистических рядов за 7 дней.</p></div></div><div class="export-actions"><button id="create-zip" class="primary" disabled>Собрать ZIP-архив</button><button id="cancel-zip" hidden>Отменить сбор</button><button id="refresh-zip">Обновить</button><a id="download-zip" class="download" hidden>Скачать ZIP</a></div><div id="export-progress" role="status" aria-live="polite"></div><p class="export-note">Распознаваемые секреты удаляются до записи в архив. В ZIP включается очищенная структура конфигурации. Пароли, ключи, secrets.yaml и база данных HA исключены. configuration/index.json покажет источники настроек и пути файлов; manifest.json — результаты чтения и пробелы. ARCHIVE_STRUCTURE.txt покажет название ZIP и дерево всех его папок и файлов.</p>
 <div class="schedule-card">
   <h3>Ежедневный автоархив</h3>
   <p>Готовый ZIP создаётся каждый день, даже когда эта панель закрыта.</p>
@@ -34,4 +59,85 @@
 <h3>Ручные архивы</h3>
 <p>Хранятся последние 3 архива, собранных кнопкой «Собрать ZIP-архив». Неполный сбор тоже можно скачать — причины указаны внутри.</p>
 <div id="export-list" class="export-list"></div>
-</section><section id="status" hidden><h2>Наблюдения с доказательствами</h2><p>Архив хранится локально. ChatGPT получает только разрешённые очищенные выборки. Наличие записей само по себе не подтверждает полноту интервала.</p><div id="metrics" class="cards"></div><p id="timezone-origin"></p><h3>Покрытие и свежесть</h3><div id="coverage"></div><h3>Локальный предпросмотр очистки</h3><p>Последние 10 очищенных записей собственного архива, до 2000 символов каждая. Проверьте их перед разрешением передачи источника; выборка не гарантирует очистку всех неизвестных секретов.</p><pre id="live-preview"></pre></section><section id="sources" hidden><h2>Источники</h2><p>Сбор и передача — отдельные разрешения. «Все доступные» превращается в явный список журналов и допустимых сущностей.</p><button id="discover">Найти все источники</button><div id="source-list"></div><button id="save-sources">Сохранить выбор и начать сбор</button><button id="stop">Остановить сбор</button></section><section id="devices" hidden><h2>Диагностические сущности</h2><p>Камеры, медиа, геопозиция, данные присутствия и чувствительные домены исключены. Snapshot показывает состояние в момент наблюдения, история Recorder — отдельный источник.</p><button id="select-entities">Выбрать все допустимые сущности</button><pre id="entity-list"></pre></section><section id="archive" hidden><h2>Архив и импорт</h2><p>Только .log, .txt и .json до 20 MiB. Исходный файл не сохраняется. Сначала проверьте очищенный предпросмотр.</p><input id="file" type="file" accept=".log,.txt,.json"><button id="preview">Предпросмотр</button><pre id="preview-content"></pre><label><input type="checkbox" id="share-import">Разрешить ChatGPT этот импорт</label><button id="commit" disabled>Сохранить очищенную копию</button><h3>Импортированные материалы</h3><div id="artifact-list"></div><pre id="artifact-content"></pre><h3>Проверить запись по evidence ID</h3><label>Идентификатор записи <input id="evidence-id" placeholder="rec_…" maxlength="36"></label><button id="show-evidence">Показать очищенную запись</button><pre id="evidence-content"></pre><button id="delete">Удалить собственный архив</button></section><section id="connection" hidden><h2>Подключение ChatGPT</h2><p>Подключите домашний MCP через Secure MCP Tunnel. Сначала создайте туннель в OpenAI Platform, затем сохраните его параметры здесь.</p><form id="tunnel-form" autocomplete="off"><label for="tunnel-id">Tunnel ID</label><input id="tunnel-id" name="tunnel-id" type="text" placeholder="tunnel_…" maxlength="107" required pattern="tunnel_[a-zA-Z0-9]{8,100}" spellcheck="false" autocomplete="off"><label for="tunnel-key">Runtime API key туннеля</label><input id="tunnel-key" name="tunnel-key" type="password" maxlength="8192" required autocomplete="new-password" spellcheck="false"><p>Ключ сохраняется локально и не показывается повторно. Это ключ транспорта OpenAI, а не токен Home Assistant. Для замены введите новый ключ.</p><button id="save-tunnel" type="submit">Сохранить туннель</button></form><p id="tunnel-state" role="status" aria-live="polite"></p><p>После сохранения перезапустите HA-Diagnostics через страницу приложения в Home Assistant. Затем выберите этот туннель при создании MCP в ChatGPT.</p><p>OAuth настраивается отдельно. Сохранение туннеля не включает удалённый доступ и не подтверждает подключение ChatGPT.</p><p id="transport-state"></p><button id="revoke">Отключить доступ ChatGPT</button></section><section id="privacy" hidden><h2>Доступ и приватность</h2><p>Очистка уменьшает раскрытие, но не гарантирует удаление любого неизвестного секрета. Уже отправленные сведения остаются в чате по условиям аккаунта OpenAI. Отзыв действует на следующие вызовы.</p><label>Настройки этого приложения (без секретов)<textarea id="policy" spellcheck="false" rows="18"></textarea></label><button id="save-policy">Сохранить локально</button><p>OAuth subject владельца подтверждается локально. MCP не имеет права менять настройки.</p></section><section id="audit" hidden><h2>Журнал обращений</h2><p>Аудит содержит субъект-псевдоним, tool, решение политики, размер и задержку. Текст чата, запрос поиска и журнал в нём не сохраняются.</p><button id="refresh-audit">Обновить</button><pre id="audit-content">Загрузка последних обращений…</pre></section></article></main><script src="app.js"></script></body></html>
+
+        </div>
+        <div data-workflow="legacy" hidden>
+          <div class="page-heading"><span class="eyebrow">ДИАГНОСТИЧЕСКИЙ АРХИВ</span><h2>Архив</h2><p>Источники, покрытие, сохранённые материалы и импорт диагностических данных.</p></div>
+<details class="legacy-card"><summary>Наблюдения с доказательствами</summary><p>Архив хранится локально. ChatGPT получает только разрешённые очищенные выборки. Наличие записей само по себе не подтверждает полноту интервала.</p><div id="metrics" class="cards"></div><p id="timezone-origin"></p><h3>Покрытие и свежесть</h3><div id="coverage"></div><h3>Локальный предпросмотр очистки</h3><p>Последние 10 очищенных записей собственного архива, до 2000 символов каждая. Проверьте их перед разрешением передачи источника; выборка не гарантирует очистку всех неизвестных секретов.</p><pre id="live-preview"></pre></details>
+<details class="legacy-card"><summary>Источники</summary><p>Сбор и передача — отдельные разрешения. «Все доступные» превращается в явный список журналов и допустимых сущностей.</p><button id="discover">Найти все источники</button><div id="source-list"></div><button id="save-sources">Сохранить выбор и начать сбор</button><button id="stop">Остановить сбор</button></details>
+<details class="legacy-card"><summary>Диагностические сущности</summary><p>Камеры, медиа, геопозиция, данные присутствия и чувствительные домены исключены. Snapshot показывает состояние в момент наблюдения, история Recorder — отдельный источник.</p><button id="select-entities">Выбрать все допустимые сущности</button><pre id="entity-list"></pre></details>
+<details class="legacy-card"><summary>Архив и импорт</summary><p>Только .log, .txt и .json до 20 MiB. Исходный файл не сохраняется. Сначала проверьте очищенный предпросмотр.</p><input id="file" type="file" accept=".log,.txt,.json"><button id="preview">Предпросмотр</button><pre id="preview-content"></pre><label><input type="checkbox" id="share-import">Разрешить ChatGPT этот импорт</label><button id="commit" disabled>Сохранить очищенную копию</button><h3>Импортированные материалы</h3><div id="artifact-list"></div><pre id="artifact-content"></pre><h3>Проверить запись по evidence ID</h3><label>Идентификатор записи <input id="evidence-id" placeholder="rec_…" maxlength="36"></label><button id="show-evidence">Показать очищенную запись</button><pre id="evidence-content"></pre><button id="delete">Удалить собственный архив</button></details>
+        </div>
+      </section>
+      <section id="yandex" data-page role="tabpanel" aria-labelledby="tab-yandex" tabindex="0" hidden>
+        <div class="page-heading"><span class="eyebrow">ИНТЕГРАЦИЯ</span><h2>Умный дом Яндекса</h2><p>Наблюдайте за доступностью устройств и сохраняйте историю в диагностическом архиве.</p></div>
+        <div class="yandex-summary">
+  <p id="yandex-state" role="status" aria-live="polite">Загрузка подключения…</p>
+  <p id="yandex-observation"></p>
+
+        </div>
+        <details id="yandex-matching-panel" class="matching-panel">
+        <summary>Сопоставление с Home Assistant</summary>
+        <div class="history-heading"><h3>Устройства и связи</h3><button id="refresh-yandex-links">Обновить устройства</button></div>
+        <p class="export-note">Свяжите устройство с объектом HA, по которому нужно проверять доступность. Подбор предлагает совпадения по названию, комнате и типу; подтвердите подходящий объект или выберите его вручную.</p>
+        <p id="yandex-links-state" role="status" aria-live="polite"></p>
+        <label for="yandex-device-search">Поиск устройств Яндекса</label>
+        <input id="yandex-device-search" type="search" placeholder="Название, дом или комната" autocomplete="off">
+        <div id="yandex-device-list" class="matching-list"></div>
+        <details class="identity-rules">
+          <summary>Точное сопоставление по ID</summary>
+          <p class="export-note">Включайте правило для навыка, который передаёт ID объектов именно этой установки HA. Дополнение свяжет устройства, когда внешний ID Яндекса соответствует существующему объекту HA. Если навык объединяет несколько установок, нужен префикс, отличающий эту установку; без него используйте ручную привязку.</p>
+          <form id="yandex-rule-form">
+            <label for="yandex-rule-skill">Навык — показан через его устройства</label>
+            <select id="yandex-rule-skill" required></select>
+            <p id="yandex-rule-examples" class="export-note"></p>
+            <label for="yandex-rule-prefix">Префикс ID этой установки, если он есть</label>
+            <input id="yandex-rule-prefix" maxlength="256" pattern="[A-Za-z0-9_.:\/\-]*" placeholder="Например, home-1: — или оставьте пустым" autocomplete="off">
+            <label class="schedule-toggle"><input id="yandex-rule-trusted" type="checkbox" required> Подтверждаю, что эти ID относятся к этой установке Home Assistant</label>
+            <button id="save-yandex-rule" type="submit">Сохранить правило</button>
+            <button id="delete-yandex-rule" type="button" hidden>Удалить правило</button>
+          </form>
+          <p class="export-note">Подтверждённые предложения и ручные привязки имеют приоритет. Название и комната сами по себе не создают автоматическую связь.</p>
+        </details>
+        </details>
+        <div class="history-heading"><h3>История событий</h3><button id="refresh-yandex-events">Обновить</button></div>
+        <p id="yandex-history-note" class="export-note">События «онлайн» и «оффлайн», сначала новые. Время соответствует проверке статуса.</p>
+        <p id="yandex-history-state" role="status" aria-live="polite"></p>
+        <div id="yandex-event-list" class="event-list"></div>
+        <button id="more-yandex-events" hidden>Показать ещё</button>
+        <dialog id="ha-link-dialog" aria-labelledby="ha-link-title">
+          <form id="ha-link-form">
+            <div class="history-heading"><h3 id="ha-link-title">Связь с Home Assistant</h3><button id="close-ha-link" type="button" aria-label="Закрыть выбор объекта">Закрыть</button></div>
+            <p id="ha-link-device"></p>
+            <p id="ha-link-state" role="status" aria-live="polite"></p>
+            <label for="ha-entity-search">Поиск объектов HA</label>
+            <input id="ha-entity-search" type="search" placeholder="Название, ID или комната" autocomplete="off">
+            <label for="ha-entity-select">Объект для проверки доступности</label>
+            <select id="ha-entity-select" size="7" required></select>
+            <p id="ha-entity-detail" class="export-note"></p>
+            <div class="matching-actions"><button id="confirm-ha-link" type="submit">Подтвердить связь</button><button id="manual-ha-link" type="button">Выбрать вручную</button></div>
+            <p class="export-note">У светильника «выключен» означает рабочее состояние. «Недоступно» в HA определяется выбранным объектом; при наличии отдельного датчика связи можно выбрать его.</p>
+          </form>
+        </dialog>
+<div class="yandex-card">
+  <h3>Подключение и сбор</h3>
+  <p>Сохраняйте историю доступности каждого устройства: когда оно было онлайн, когда обнаружен офлайн и когда связь восстановилась. История включается в каждый новый ZIP.</p>
+  <form id="yandex-form" autocomplete="off">
+    <label class="schedule-toggle"><input id="yandex-enabled" type="checkbox"> Собирать историю Яндекса</label>
+    <label for="yandex-token">Токен Яндекс OAuth с доступом к чтению устройств <code>iot:view</code></label>
+    <input id="yandex-token" type="password" maxlength="8192" autocomplete="new-password" spellcheck="false" placeholder="Введите при первом подключении или для замены">
+    <p class="export-note">Токен сохраняется только в дополнении и не включается в ZIP. Оставьте поле пустым, чтобы использовать сохранённый токен. <a href="https://yandex.ru/dev/dialogs/smart-home/doc/ru/concepts/platform-protocol" target="_blank" rel="noopener noreferrer">Как получить доступ</a></p>
+    <div class="yandex-options">
+      <label for="yandex-poll">Проверять раз в <input id="yandex-poll" type="number" value="60" min="30" max="3600" step="1" required> секунд</label>
+      <label for="yandex-retention">Хранить историю <input id="yandex-retention" type="number" value="30" min="1" max="365" step="1" required> дней</label>
+    </div>
+    <button id="save-yandex" type="submit" disabled>Сохранить подключение</button>
+  </form>
+  <p class="export-note">Сбор работает при закрытой панели. История начинается после подключения. Время перехода определяется с точностью до интервала проверки; короткие отключения между проверками могут остаться незамеченными. Пропуски наблюдения записываются отдельно от офлайна. Названия и идентификаторы устройств в архиве заменяются устойчивыми псевдонимами.</p>
+</div>
+      </section>
+    </article>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

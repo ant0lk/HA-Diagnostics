@@ -1,5 +1,5 @@
 name: HA-Diagnostics — Import
-version: 1.0.0-alpha.6
+version: 1.0.0-alpha.7
 slug: ha_diagnostics
 description: Локальный импорт и диагностика очищенных данных. Предварительная alpha.
 url: https://github.com/ant0lk/HA-Diagnostics
@@ -13,7 +13,7 @@ ingress: true
 ingress_port: 8099
 ingress_stream: true
 panel_admin: true
-panel_title: HA-Diagnostics
+panel_title: Диагностика
 panel_icon: mdi:clipboard-search-outline
 hassio_api: false
 homeassistant_api: false

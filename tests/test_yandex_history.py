@@ -18,7 +18,7 @@ from ha_diagnostics.ipc import AdminIPCServer, IPCError
 from ha_diagnostics.redaction import Redactor
 from ha_diagnostics.ui import AdminGate, create_ui
 from ha_diagnostics.yandex_history import (API_ORIGIN, YandexAPI, YandexArgs,
-    YandexHistory, MAX_RESPONSE_BYTES, MAX_DEVICES)
+    YandexEventsArgs, YandexHistory, MAX_RESPONSE_BYTES, MAX_DEVICES)
 
 TOKEN = "YANDEX_SECRET_CANARY_123456"
 REDACTOR = Redactor(b"y" * 32)
@@ -296,7 +296,8 @@ async def test_fixed_resources_validate_catalog_and_device_status():
         return httpx.Response(200, json=payload)
     api = YandexAPI(TOKEN, transport=httpx.MockTransport(handler))
     try:
-        assert await api.devices() == [{"id": "lamp_1", "name": "Lamp", "type": "unknown"}]
+        assert await api.devices() == [{"id": "lamp_1", "name": "Lamp", "type": "unknown",
+            "home_name": None, "room_name": None, "external_id": None, "skill_id": None}]
         payload = {"status": "ok", "id": "lamp_1", "state": "online", "capabilities": [{"on": False}]}
         assert await api.availability("lamp_1") == "online"  # off is independent of offline.
         payload["state"] = {"online": True}
@@ -336,6 +337,7 @@ async def test_response_limit_and_transport_failure_are_safe():
 
 async def test_manual_and_daily_zips_include_history_checksums_and_no_token(tmp_path):
     history, clock, api = await connected(tmp_path)
+    api.catalog[0].update(home_name="Private home canary", room_name="Private room canary")
     class Sources(DemoExportSources):
         async def logs(self, source):
             yield ("INFO " + TOKEN + "\n").encode()
@@ -364,7 +366,8 @@ async def test_manual_and_daily_zips_include_history_checksums_and_no_token(tmp_
                 value = json.loads(archive.read("yandex/availability_history.json"))
                 assert any(e["previous_status"] == "online" and e["status"] == "offline" for e in value["events"])
                 assert "availability_history.json" in archive.read("ARCHIVE_STRUCTURE.txt").decode()
-                assert all(TOKEN.encode() not in archive.read(name) for name in archive.namelist())
+                for secret in (TOKEN, "Private bedroom", "Private home canary", "Private room canary"):
+                    assert all(secret.encode() not in archive.read(name) for name in archive.namelist())
             assert api.reads == 4  # ZIP creation does not poll the network.
     finally:
         await service.close()
@@ -502,5 +505,115 @@ async def test_optional_corrupt_yandex_database_does_not_block_ha_zip(tmp_path):
             source = next(s for s in manifest["sources"] if s["source"] == "yandex/coverage")
             assert source["status"] == "unavailable" and source["reason"] == "YANDEX_STORAGE_UNAVAILABLE"
             assert "home_assistant/config.json" in archive.namelist()
+    finally:
+        await service.close()
+
+
+async def test_api_resolves_device_home_and_room_labels_without_other_data():
+    payload = {"status": "ok", "households": [{"id": "home", "name": "Квартира"}],
+        "rooms": [{"id": "room", "name": "Спальня", "household_id": "home", "devices": ["lamp"]}],
+        "devices": [{"id": "lamp", "name": "Светильник", "room": "room", "household_id": "home"},
+                    {"id": "via-room", "name": "Датчик", "room": "room"},
+                    {"id": "unassigned", "room": None}],
+        "scenarios": [{"name": TOKEN}], "groups": [{"name": TOKEN}]}
+    api = YandexAPI(TOKEN, transport=httpx.MockTransport(lambda request: httpx.Response(200, json=payload)))
+    try:
+        rows = await api.devices()
+        assert [(row["home_name"], row["room_name"]) for row in rows] == [
+            ("Квартира", "Спальня"), ("Квартира", "Спальня"), (None, None)]
+        assert rows[2]["name"] == "Без названия" and TOKEN not in json.dumps(rows)
+        payload["rooms"] = None
+        payload["households"] = [{"id": [], "name": TOKEN}]
+        rows = await api.devices()
+        assert all(row["room_name"] is None and row["home_name"] is None for row in rows)
+    finally:
+        await api.close()
+
+
+async def test_panel_events_paginate_only_observed_states_and_isolate_accounts(tmp_path):
+    history, clock, api = await connected(tmp_path)
+    api.catalog[0].update(name="Светильник", home_name="Квартира", room_name="Спальня")
+    try:
+        await history.poll_once()
+        clock.advance()
+        api.states["device-one"] = "offline"
+        await history.poll_once()
+        clock.advance()
+        api.error = "YANDEX_NETWORK_ERROR"
+        await history.poll_once()
+        clock.advance()
+        api.error = None
+        api.catalog.pop()  # Removed is not an offline event.
+        api.states["device-one"] = "online"
+        await history.poll_once()
+        first = await history.panel_events(YandexEventsArgs(limit=2))
+        assert [(e["status"], e["observed_at"]) for e in first["events"]] == [
+            ("online", "2026-10-10T00:03:00.000000Z"), ("offline", "2026-10-10T00:01:00.000000Z")]
+        assert all((e["device_name"], e["home_name"], e["room_name"]) ==
+            ("Светильник", "Квартира", "Спальня") for e in first["events"])
+        second = await history.panel_events(YandexEventsArgs(before_event_id=first["next_before_event_id"], limit=2))
+        assert len(second["events"]) == 2 and second["next_before_event_id"] is None
+        assert not ({e["event_id"] for e in first["events"]} & {e["event_id"] for e in second["events"]})
+        await history.close()
+        history = YandexHistory(tmp_path / "private", REDACTOR, clock=clock, api_factory=lambda token: api)
+        assert (await history.panel_events(YandexEventsArgs(limit=1)))["events"] == first["events"][:1]
+        api.catalog[0]["name"] = "Changed " + TOKEN
+        clock.advance()
+        await history.poll_once()
+        assert TOKEN not in json.dumps(await history.panel_events(YandexEventsArgs()))
+        await history.configure(YandexArgs(enabled=True, token="OTHER_ACCOUNT_TOKEN_123456"))
+        assert (await history.panel_events(YandexEventsArgs()))["events"] == []
+        clock.advance()
+        await history.poll_once()
+        current = await history.panel_events(YandexEventsArgs())
+        assert len(current["events"]) == 1 and current["session_id"] != first["session_id"]
+        assert TOKEN not in json.dumps(current)
+    finally:
+        await history.close()
+
+
+async def test_panel_retention_never_turns_clipped_boundary_into_new_event(tmp_path):
+    history, clock, api = await connected(tmp_path)
+    try:
+        await history.poll_once()
+        clock.advance(2 * 86400)
+        # A preserved steady-state segment can start before retention in ZIP.
+        with history.store.db:
+            history.store.db.execute("UPDATE events SET last_observed_at=?", (clock().isoformat().replace("+00:00", "Z"),))
+        await history.configure(YandexArgs(enabled=True, retention_days=1))
+        snapshot = await history.export_snapshot()
+        assert len(snapshot["events"]) == 2 and all(e["started_before_retention"] for e in snapshot["events"])
+        assert (await history.panel_events(YandexEventsArgs()))["events"] == []
+    finally:
+        await history.close()
+
+
+async def test_owner_only_history_endpoint_and_ipc_with_bounded_cursors(tmp_path):
+    history, clock, api = await connected(tmp_path)
+    await history.poll_once()
+    service = ExportService(tmp_path / "exports", DemoExportSources(), REDACTOR,
+        min_free_bytes=0, yandex_history=history)
+    app = create_ui(service, gate=AdminGate("owner"), web_dir="web")
+    try:
+        for peer, owner, allowed in [("198.51.100.2", "owner", False),
+                ("172.30.32.2", "other", False), ("172.30.32.2", "owner", True)]:
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app, client=(peer, 42)), base_url="http://localhost") as client:
+                headers = {"X-Remote-User-Id": owner}
+                response = await client.get("/api/yandex/events?limit=1", headers=headers)
+                assert response.status_code == (200 if allowed else 403)
+                assert response.headers["Cache-Control"] == "no-store" and TOKEN not in response.text
+                if allowed:
+                    assert len(response.json()["events"]) == 1
+                    assert response.json()["next_before_event_id"] is not None
+                    for query in ("limit=101", "limit=0", "limit=-1", "limit=1&limit=2", "limit=true",
+                            "before_event_id=0", "before_event_id=9223372036854775808", "url=https://evil.example"):
+                        assert (await client.get("/api/yandex/events?" + query, headers=headers)).status_code == 400
+        ipc = AdminIPCServer(tmp_path / "unused.sock", service.handlers())
+        with pytest.raises(IPCError, match="IPC_FORBIDDEN"):
+            await ipc.dispatch(10002, {"op": "yandex_events", "args": {}})
+        result = await ipc.dispatch(10003, {"op": "yandex_events", "args": {"limit": 1}})
+        assert len(result["events"]) == 1
+        with pytest.raises(IPCError, match="IPC_INVALID_REQUEST"):
+            await ipc.dispatch(10003, {"op": "yandex_events", "args": {"limit": 1000}})
     finally:
         await service.close()

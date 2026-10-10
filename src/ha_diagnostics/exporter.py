@@ -27,7 +27,8 @@ from .export_insights import (LogCoverage, history_coverage, network_context, ov
                               overview_text, comparison_record, comparison_key, pick)
 from .export_schedule import ExportSchedule, ScheduleArgs, ScheduleStore
 from .redaction import IDENTIFIER_KEY, SECRET_KEY, Redactor
-from .yandex_history import YandexArgs, YandexHistory
+from .yandex_history import YandexArgs, YandexEventsArgs, YandexHistory
+from .yandex_matching import CandidateArgs, LinkArgs, IdentityRuleArgs
 
 EXPORT_ID = r"^export_[a-f0-9]{32}$"
 MAX_SOURCE_BYTES = 128 * 1024 * 1024
@@ -197,6 +198,7 @@ class ExportService:
         try:
             self.yandex = yandex_history or YandexHistory(self.directory.parent / "private",
                 redactor, clock=self._clock, demo=demo)
+            self.yandex.matcher.sources = sources
         except (OSError, ValueError, sqlite3.Error):
             self.yandex = None
             self._yandex_error = "YANDEX_STORAGE_UNAVAILABLE"
@@ -304,7 +306,12 @@ class ExportService:
                 "cancel_export": (ExportArgs, self.cancel),
                 "delete_export": (ExportArgs, self.delete),
                 "set_export_schedule": (ScheduleArgs, self.set_schedule),
-                "set_yandex": (YandexArgs, self.set_yandex)}
+                "set_yandex": (YandexArgs, self.set_yandex),
+                "yandex_events": (YandexEventsArgs, self.yandex_events),
+                "yandex_links": (EmptyExportArgs, self.yandex_links),
+                "yandex_candidates": (CandidateArgs, self.yandex_candidates),
+                "set_yandex_link": (LinkArgs, self.set_yandex_link),
+                "set_yandex_identity_rule": (IdentityRuleArgs, self.set_yandex_identity_rule)}
 
     async def status(self, args):
         self._cleanup()
@@ -322,6 +329,31 @@ class ExportService:
         if self.yandex is None:
             raise BrokerError("YANDEX_STORAGE_UNAVAILABLE")
         return await self.yandex.configure(args)
+
+    async def yandex_events(self, args):
+        if self.yandex is None:
+            raise BrokerError("YANDEX_STORAGE_UNAVAILABLE")
+        return await self.yandex.panel_events(args)
+
+    async def yandex_links(self, args):
+        if self.yandex is None:
+            raise BrokerError("YANDEX_STORAGE_UNAVAILABLE")
+        return await self.yandex.panel_links(args)
+
+    async def yandex_candidates(self, args):
+        if self.yandex is None:
+            raise BrokerError("YANDEX_STORAGE_UNAVAILABLE")
+        return await self.yandex.candidates(args)
+
+    async def set_yandex_link(self, args):
+        if self.yandex is None:
+            raise BrokerError("YANDEX_STORAGE_UNAVAILABLE")
+        return await self.yandex.set_link(args)
+
+    async def set_yandex_identity_rule(self, args):
+        if self.yandex is None:
+            raise BrokerError("YANDEX_STORAGE_UNAVAILABLE")
+        return await self.yandex.set_identity_rule(args)
 
     def schedule_status(self):
         return self.schedule.model_dump() | {
@@ -874,7 +906,7 @@ class ExportService:
         if coverage["configured"] or snapshot["devices"] or snapshot["events"]:
             await self._json_source(archive, job, records, "yandex/devices", lambda: read(snapshot["devices"]))
             await self._json_source(archive, job, records, "yandex/availability_history", lambda: read({
-                "schema_version": 1, "retained_from": coverage["retained_from"],
+                "schema_version": 2, "retained_from": coverage["retained_from"],
                 "exported_at": coverage["exported_at"], "events": snapshot["events"]}))
 
     async def _build(self, job):

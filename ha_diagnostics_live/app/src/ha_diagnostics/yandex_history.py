@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
 from .broker import BrokerError
 from .ipc import _json_loads
+from .yandex_matching import HomeAssistantMatcher
 
 API_ORIGIN = "https://api.iot.yandex.net"
 DEVICE_ID = r"[A-Za-z0-9_-]{1,200}"
@@ -27,10 +28,18 @@ MAX_DEVICES = 1000
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_EVENTS = 30_000
 MAX_GAPS = 5000
+MAX_UI_EVENTS = 100
+MAX_LABEL_LENGTH = 256
 
 
 def stamp(value):
     return value.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
+class YandexEventsArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, hide_input_in_errors=True)
+    before_event_id: int | None = Field(default=None, ge=1, le=2**63 - 1)
+    limit: int = Field(default=MAX_UI_EVENTS, ge=1, le=MAX_UI_EVENTS)
 
 
 class YandexArgs(BaseModel):
@@ -153,15 +162,28 @@ class YandexAPI:
             raise BrokerError("YANDEX_DEVICE_LIMIT")
         seen = set()
         result = []
+        # Resolve only display labels. No scenarios, capabilities or presence data.
+        def catalog_by_id(key):
+            items = value.get(key, [])
+            if not isinstance(items, list):
+                return {}
+            return {item["id"]: item for item in items
+                if isinstance(item, dict) and isinstance(item.get("id"), str)}
+        rooms, homes = catalog_by_id("rooms"), catalog_by_id("households")
         for row in rows:
             device_id = row.get("id") if isinstance(row, dict) else None
             if not isinstance(device_id, str) or not re.fullmatch(DEVICE_ID, device_id) or device_id in seen:
                 raise BrokerError("YANDEX_API_FORMAT")
             seen.add(device_id)
-            # Do not ingest capabilities, scenarios, rooms or household data.
+            room = rooms.get(row.get("room")) if isinstance(row.get("room"), str) else None
+            household_id = row.get("household_id") or (room or {}).get("household_id")
+            home = homes.get(household_id) if isinstance(household_id, str) else None
             result.append({"id": device_id,
-                "name": row.get("name") if isinstance(row.get("name"), str) else device_id,
-                "type": row.get("type") if isinstance(row.get("type"), str) else "unknown"})
+                "name": row.get("name") if isinstance(row.get("name"), str) and row["name"] else "Без названия",
+                "type": row.get("type") if isinstance(row.get("type"), str) else "unknown",
+                "home_name": (home or {}).get("name"), "room_name": (room or {}).get("name"),
+                "external_id": row.get("external_id") if isinstance(row.get("external_id"), str) else None,
+                "skill_id": row.get("skill_id") if isinstance(row.get("skill_id"), str) else None})
         return result
 
     async def availability(self, device_id):
@@ -177,23 +199,31 @@ class YandexAPI:
 
 
 class AvailabilityStore:
-    """Only pseudonymous metadata and availability; no raw API responses."""
+    """Pseudonymous history plus a separate private database of panel labels."""
     def __init__(self, directory):
         self.path = Path(directory) / "yandex-history.sqlite"
-        for path in (self.path, Path(str(self.path) + "-journal")):
-            if path.exists() or path.is_symlink():
-                info = path.lstat()
-                if path.is_symlink() or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-                    raise ValueError("UNSAFE_YANDEX_STORAGE")
-        # Pin the initial regular file before SQLite opens it in a private dir.
-        fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
-        os.close(fd)
-        self.path.chmod(0o600)
+        self.ui_path = Path(directory) / "yandex-ui-labels.sqlite"
+        for database in (self.path, self.ui_path):
+            for path in (database, Path(str(database) + "-journal")):
+                if path.exists() or path.is_symlink():
+                    info = path.lstat()
+                    if path.is_symlink() or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                        raise ValueError("UNSAFE_YANDEX_STORAGE")
+            # Pin each initial regular file before SQLite opens it in a private dir.
+            fd = os.open(database, os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            os.close(fd)
+            database.chmod(0o600)
         self.db = sqlite3.connect(self.path)
         self.db.row_factory = sqlite3.Row
+        self.db.execute("ATTACH DATABASE ? AS local_ui", (str(self.ui_path),))
         self.db.executescript("""
             PRAGMA journal_mode=DELETE;
             PRAGMA secure_delete=ON;
+            PRAGMA local_ui.journal_mode=DELETE;
+            PRAGMA local_ui.secure_delete=ON;
+            CREATE TABLE IF NOT EXISTS local_ui.labels (
+              session_id TEXT, device_ref TEXT, device_name TEXT, home_name TEXT, room_name TEXT,
+              PRIMARY KEY(session_id,device_ref));
             CREATE TABLE IF NOT EXISTS devices (
               session_id TEXT, device_ref TEXT, name TEXT, type TEXT, present INTEGER,
               first_seen_at TEXT, last_seen_at TEXT, status TEXT, last_observed_at TEXT,
@@ -204,6 +234,7 @@ class AvailabilityStore:
               status TEXT, observed_at TEXT, last_observed_at TEXT,
               previous_observed_at TEXT, previous_status TEXT, kind TEXT, reason TEXT);
             CREATE INDEX IF NOT EXISTS events_device ON events(session_id,device_ref,event_id);
+            CREATE INDEX IF NOT EXISTS events_session ON events(session_id,event_id);
             CREATE TABLE IF NOT EXISTS gaps (
               gap_id INTEGER PRIMARY KEY, from_at TEXT, to_at TEXT, reason TEXT, is_open INTEGER);
             CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY,value TEXT);
@@ -216,22 +247,29 @@ class AvailabilityStore:
     def set_meta(self, key, value):
         self.db.execute("INSERT OR REPLACE INTO metadata VALUES (?,?)", (key, str(value)))
 
-    def observe(self, session, ref, status, at, reason=None):
+    def observe(self, session, ref, status, at, reason=None, comparison=None):
         row = self.db.execute("SELECT * FROM devices WHERE session_id=? AND device_ref=?", (session, ref)).fetchone()
         if row is None:
             return
         updated = 0
-        if row["status"] == status:
+        changed_comparison = False
+        if comparison is not None and row["event_id"]:
+            previous = self.matcher.event_comparison(row["event_id"])
+            changed_comparison = any(previous.get(key) != comparison.get(key) for key in
+                ("ha_entity_ref", "ha_status", "comparison", "ha_reason", "method", "mapping_revision"))
+        if row["status"] == status and not changed_comparison:
             # Compress consecutive observations without claiming exact uptime.
             updated = self.db.execute("UPDATE events SET last_observed_at=? WHERE event_id=? AND session_id=? AND device_ref=? AND status=? AND reason IS ?",
                                      (at, row["event_id"], session, ref, status, reason)).rowcount
         if not updated:
-            kind = "gap" if status == "unknown" else "retained_boundary" if row["status"] == status else "initial" if row["status"] is None else \
+            kind = "gap" if status == "unknown" else "comparison" if row["status"] == status and changed_comparison else "retained_boundary" if row["status"] == status else "initial" if row["status"] is None else \
                 "removed" if status == "removed" else "resumed" if row["status"] in {"unknown", "removed"} else "transition"
             cursor = self.db.execute("INSERT INTO events VALUES (NULL,?,?,?,?,?,?,?,?,?)",
                 (session, ref, status, at, at, row["last_observed_at"], row["status"], kind, reason))
             self.db.execute("UPDATE devices SET event_id=? WHERE session_id=? AND device_ref=?",
                             (cursor.lastrowid, session, ref))
+            if comparison is not None:
+                self.matcher.record(cursor.lastrowid, comparison)
         self.db.execute("UPDATE devices SET status=?,last_observed_at=?,last_confirmed_status=COALESCE(?,last_confirmed_status) WHERE session_id=? AND device_ref=?",
                         (status, at, status if status in {"online", "offline"} else None, session, ref))
 
@@ -247,6 +285,9 @@ class AvailabilityStore:
                     VALUES (?,?,?,?,1,?,?) ON CONFLICT(session_id,device_ref) DO UPDATE SET
                     name=excluded.name,type=excluded.type,present=1,last_seen_at=excluded.last_seen_at""",
                     (session, device["device_ref"], device["name"], device["type"], at, at))
+                self.db.execute("INSERT OR REPLACE INTO local_ui.labels VALUES (?,?,?,?,?)",
+                    (session, device["device_ref"], device.get("device_name"),
+                     device.get("home_name"), device.get("room_name")))
 
     def gap(self, reason, at):
         with self.db:
@@ -281,7 +322,31 @@ class AvailabilityStore:
                     self.db.execute(f"DELETE FROM {table} WHERE {key} IN (SELECT {key} FROM {table} ORDER BY {key} LIMIT ?)", (count - limit,))
                     self.set_meta("storage_evictions", int(self.meta("storage_evictions") or 0) + count - limit)
             self.db.execute("DELETE FROM devices WHERE present=0 AND NOT EXISTS (SELECT 1 FROM events WHERE events.session_id=devices.session_id AND events.device_ref=devices.device_ref)")
+            self.db.execute("DELETE FROM local_ui.labels WHERE NOT EXISTS (SELECT 1 FROM devices WHERE devices.session_id=labels.session_id AND devices.device_ref=labels.device_ref)")
+            if hasattr(self, "matcher"):
+                self.matcher.prune()
             self.set_meta("retained_from", cutoff)
+
+    def panel_events(self, settings, now, args):
+        self.prune(now, settings.retention_days)
+        cutoff = self.meta("retained_from")
+        # Use actual observation times, never a clipped retention boundary.
+        rows = self.db.execute("""SELECT e.event_id,e.status,e.observed_at,e.kind,e.reason,
+            COALESCE(l.device_name,d.name,e.device_ref) AS device_name,l.home_name,l.room_name
+            FROM events e LEFT JOIN devices d
+              ON d.session_id=e.session_id AND d.device_ref=e.device_ref
+            LEFT JOIN local_ui.labels l
+              ON l.session_id=e.session_id AND l.device_ref=e.device_ref
+            WHERE e.session_id=? AND e.status IN ('online','offline') AND e.observed_at>=?
+              AND (? IS NULL OR e.event_id<?)
+            ORDER BY e.event_id DESC LIMIT ?""",
+            (settings.session_id, cutoff, args.before_event_id, args.before_event_id, args.limit + 1)).fetchall()
+        events = [dict(row) for row in rows[:args.limit]]
+        if hasattr(self, "matcher"):
+            for event in events:
+                event.update(self.matcher.event_comparison(event["event_id"], labels=True))
+        return {"events": events, "session_id": settings.session_id, "retained_from": cutoff,
+            "next_before_event_id": events[-1]["event_id"] if len(rows) > args.limit else None}
 
     def snapshot(self, settings, now):
         self.prune(now, settings.retention_days)
@@ -300,6 +365,10 @@ class AvailabilityStore:
                 device["freshness"] = "observed"
         events = [dict(r) for r in self.db.execute("SELECT * FROM events ORDER BY event_id")]
         for event in events:
+            if hasattr(self, "matcher"):
+                event.update(self.matcher.event_comparison(event["event_id"]))
+                if event["ha_observed_at"] and event["ha_observed_at"] < cutoff:
+                    event.update(ha_status="unknown", ha_observed_at=None, comparison="unknown", ha_reason="HA_OUTSIDE_RETENTION")
             # Preserve the boundary state, without exporting time outside retention.
             event["started_before_retention"] = event["observed_at"] < cutoff
             if event["started_before_retention"]:
@@ -314,7 +383,7 @@ class AvailabilityStore:
             if gap["is_open"]:
                 gap["to_at"] = stamp(now)
         return {"devices": devices, "events": events, "coverage": {
-            "schema_version": 1, "enabled": settings.enabled, "configured": settings.token is not None,
+            "schema_version": 2, "enabled": settings.enabled, "configured": settings.token is not None,
             "session_id": settings.session_id, "poll_seconds": settings.poll_seconds,
             "retention_days": settings.retention_days, "retained_from": cutoff, "exported_at": stamp(now),
             "last_poll_at": self.meta("last_poll_at"), "last_successful_poll_at": self.meta("last_successful_poll_at"),
@@ -327,6 +396,8 @@ class AvailabilityStore:
                 "Repeated equal states are compressed; last_observed_at is the last confirming poll.",
                 "Short changes between polls can be missed. Yandex reports cloud availability, not a direct network probe.",
                 "Unknown denotes a collection gap, not device offline. Removed denotes absence in a complete catalog.",
+                "HA comparisons use the selected entity's availability at its recorded observation time, not today's state.",
+                "Comparison events can occur while Yandex availability is unchanged. Unknown or unlinked is not a mismatch.",
                 "Each replacement token starts a separate session to avoid joining different accounts."]}}
 
     def close(self):
@@ -355,6 +426,13 @@ class YandexHistory:
         self._startup = True
         self._retry_seconds = 0
         self._retired_tokens = []
+        self.matcher = HomeAssistantMatcher(self.store, self.redactor, self.clock, self.scrub_all_secrets)
+        self.store.matcher = self.matcher
+
+    def scrub_all_secrets(self, text):
+        if self.matcher.sources is not None:
+            text = self.matcher.sources.scrub_known_secret(text)
+        return self.scrub_known_secret(text)
 
     def scrub_known_secret(self, text):
         tokens = self._retired_tokens + ([self.settings.token.get_secret_value()] if self.settings.token else [])
@@ -459,10 +537,17 @@ class YandexHistory:
             try:
                 async with asyncio.timeout(120):
                     catalog = await self.api.devices()
+                    self.matcher.inventory(session, catalog)
                     safe = [{"device_ref": self.redactor.alias("YANDEX_DEVICE", d["id"]),
-                        "name": self.redactor.alias("IDENTIFIER", self.scrub_known_secret(d["name"])),
-                        "type": d["type"] if re.fullmatch(r"devices\.types\.[a-z_.]{1,80}", d["type"]) else "unknown"} for d in catalog]
+                        "name": self.redactor.alias("IDENTIFIER", self.scrub_all_secrets(d["name"])),
+                        "type": d["type"] if re.fullmatch(r"devices\.types\.[a-z_.]{1,80}", d["type"]) else "unknown",
+                        **{key: self.scrub_all_secrets(d[key])[:MAX_LABEL_LENGTH]
+                           if isinstance(d.get(key), str) and d[key] else None
+                           for key in ("home_name", "room_name")},
+                        "device_name": self.scrub_all_secrets(d["name"] or "Без названия")[:MAX_LABEL_LENGTH]} for d in catalog]
                     self.store.inventory(session, safe, stamp(self.clock()))
+                    await self.matcher.refresh(force=True)
+                    self.matcher.apply_exact(session)
                     semaphore = asyncio.Semaphore(4)
                     fatal = None
                     async def read(device, metadata):
@@ -479,7 +564,8 @@ class YandexHistory:
                                 if reason in {"YANDEX_AUTH_FAILED", "YANDEX_RATE_LIMIT"}:
                                     fatal = reason
                             with self.store.db:
-                                self.store.observe(session, metadata["device_ref"], state, stamp(self.clock()), reason)
+                                comparison = self.matcher.comparison(session, metadata["device_ref"], state, self.settings.poll_seconds)
+                                self.store.observe(session, metadata["device_ref"], state, stamp(self.clock()), reason, comparison)
                     await asyncio.gather(*(read(d, s) for d, s in zip(catalog, safe)))
                     complete = True
             except (BrokerError, TimeoutError) as error:
@@ -517,6 +603,39 @@ class YandexHistory:
             value["coverage"]["error"] = self._settings_error
         value["coverage"]["demo"] = self.demo
         return value
+
+    async def panel_events(self, args):
+        # Available only through the local owner/admin channel, never MCP or ZIP.
+        value = self.store.panel_events(self.settings, self.clock(), args)
+        for event in value["events"]:
+            for key in ("device_name", "home_name", "room_name", "ha_name"):
+                if event[key]:
+                    event[key] = self.scrub_all_secrets(event[key])
+        return value
+
+    async def panel_links(self, args):
+        await self.matcher.refresh()
+        self.store.prune(self.clock(), self.settings.retention_days)
+        return self.matcher.panel(self.settings)
+
+    async def candidates(self, args):
+        if args.session_id != self.settings.session_id:
+            raise BrokerError("YANDEX_CONNECTION_CHANGED")
+        await self.matcher.refresh()
+        return {"candidates": self.matcher.suggestions(args.session_id, args.device_ref),
+            "ha_error": self.matcher.error}
+
+    async def set_link(self, args):
+        await self.matcher.refresh()
+        self.matcher.set_link(args, self.settings.session_id)
+        self._changed.set()
+        return {"saved": True}
+
+    async def set_identity_rule(self, args):
+        await self.matcher.refresh()
+        self.matcher.set_rule(args, self.settings.session_id)
+        self._changed.set()
+        return {"saved": True}
 
     async def close(self):
         if self._task and not self._task.done():

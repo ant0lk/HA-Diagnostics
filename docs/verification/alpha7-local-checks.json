@@ -1,0 +1,16 @@
+{
+  "product_version": "1.0.0-alpha.7",
+  "date": "2026-10-10",
+  "pytest": {
+    "passed": 381,
+    "skipped": 2,
+    "failures": 0,
+    "errors": 0,
+    "seconds": 74.06,
+    "evidence": "alpha7-pytest.xml",
+    "sha256": "7eacd4e7a7ac1fcaaafa9f6fa7585cc1e2a0f74c236fb04426f7f9f66db10eb6"
+  },
+  "source_live_copies_match": true,
+  "live_yandex_account_verified": false,
+  "ha_os_install_verified": false
+}

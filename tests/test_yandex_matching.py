@@ -200,7 +200,7 @@ async def test_media_device_suggests_mqtt_power_switch(setup, kind):
     assert device["ha_status"] == "available"
 
 
-async def test_device_candidates_use_registry_device_names_and_include_all_child_domains(setup):
+async def test_device_candidates_use_device_and_entity_names_and_include_all_child_domains(setup):
     history, clock, api, ha = setup
     api.catalog[0].update(name="PlayStation 5", type="devices.types.media_device")
     ha.registries["devices"][2].update(name="PlayStation 5", manufacturer="Sony", model="PS5")
@@ -214,7 +214,7 @@ async def test_device_candidates_use_registry_device_names_and_include_all_child
          "platform": "mqtt", "device_id": "ha-socket"},
         {"id": "ps-diagnostic", "entity_id": "sensor.console_diagnostic", "name": "Diagnostic",
          "platform": "mqtt", "device_id": "ha-socket", "disabled_by": "integration"}])
-    # A similarly named entity of a different device must not nominate that device.
+    # An entity label also nominates its own registry device.
     ha.states[0]["attributes"]["friendly_name"] = "PlayStation 5"
     clock.advance(301)
     await history.poll_once()
@@ -222,8 +222,9 @@ async def test_device_candidates_use_registry_device_names_and_include_all_child
     assert (await history.candidates(CandidateArgs(session_id=args.session_id, device_ref=args.device_ref)))["device_candidates"] == []
     result = await history.candidates(args)
     console = next(row for row in result["ha_devices"] if row["name"] == "PlayStation 5")
-    assert result["device_candidates"] == [{"ha_device_ref": console["ha_device_ref"],
-        "reasons": ["name", "room"], "score": 90}]
+    lamp = history.matcher.entities[entity_ref(history)]["ha_device_ref"]
+    assert {row["ha_device_ref"] for row in result["device_candidates"]} == {console["ha_device_ref"], lamp}
+    assert all(row["reasons"] == ["name", "room"] and row["score"] == 90 for row in result["device_candidates"])
     assert console["platforms"] == ["mqtt"] and console["entity_count"] == 4
     assert console["manufacturer"] == "Sony" and console["model"] == "PS5"
     children = [row for row in result["entities"] if row["ha_device_ref"] == console["ha_device_ref"]]
@@ -240,6 +241,178 @@ async def test_device_candidates_use_registry_device_names_and_include_all_child
     with pytest.raises(BrokerError, match="HA_ENTITY_NOT_FOUND"):
         await history.set_link(LinkArgs(session_id=history.settings.session_id, device_ref=device_ref(),
             ha_device_ref=console["ha_device_ref"], entity_ref=disabled["entity_ref"], method="manual"))
+
+
+@pytest.mark.parametrize("kind,label_source", [
+    ("devices.types.fan", "registry"),
+    ("devices.types.ventilation.fan", "registry"),
+    ("devices.types.ventilation.fan", "state"),
+])
+async def test_device_name_filter_matches_fan_object_with_all_filters_enabled(setup, kind, label_source):
+    history, clock, api, ha = setup
+    api.catalog[0].update(name="Вентилятор", type=kind)
+    ha.registries["devices"][0]["name"] = "Mi Smart Standing Fan Pro"
+    ha.registries["entities"][0].update(entity_id="fan.standing_fan",
+        name="Вентилятор" if label_source == "registry" else "Power")
+    ha.states[0].update(entity_id="fan.standing_fan",
+        attributes={"friendly_name": "Вентилятор"} if label_source == "state" else {})
+    clock.advance(301)
+    await history.poll_once()
+    args = CandidateArgs(session_id=history.settings.session_id, device_ref=device_ref())
+    result = await history.candidates(args)
+    target = history.matcher.entities[entity_ref(history, "fan.standing_fan")]["ha_device_ref"]
+    assert history.matcher.devices[target]["name"] == "Mi Smart Standing Fan Pro"
+    assert result["device_candidates"] == [{"ha_device_ref": target, "reasons": ["name", "room", "type"], "score": 100}]
+    assert history.matcher.link(args.session_id, args.device_ref) is None
+    await history.set_link(LinkArgs(**args.model_dump(), ha_device_ref=target,
+        entity_ref=entity_ref(history, "fan.standing_fan"), method="suggestion"))
+    assert history.matcher.link(args.session_id, args.device_ref)["method"] == "suggestion"
+    # The matching name belongs only to this object's current device.
+    ha.registries["entities"][0]["device_id"] = "ha-other"
+    clock.advance(301)
+    await history.poll_once()
+    assert (await history.candidates(args))["device_candidates"] == []  # New owner is in another room.
+    result = await history.candidates(args.model_copy(update={"match_room": False}))
+    new_target = history.matcher.entities[entity_ref(history, "fan.standing_fan")]["ha_device_ref"]
+    assert [row["ha_device_ref"] for row in result["device_candidates"]] == [new_target]
+    assert new_target != target
+    ha.registries["entities"][0].pop("device_id")
+    clock.advance(301)
+    await history.poll_once()
+    assert (await history.candidates(args.model_copy(update={"match_room": False})))["device_candidates"] == []
+
+
+@pytest.mark.parametrize("subtype,domain,class_source,device_class,label,suffix", [
+    ("motion", "binary_sensor", "state", "occupancy", "Измерение", "measurement"),
+    ("motion", "binary_sensor", "device_class", "motion", "Измерение", "measurement"),
+    ("motion", "binary_sensor", "original_device_class", "occupancy", "Измерение", "measurement"),
+    ("motion", "binary_sensor", None, None, "Occupancy", "measurement"),
+    ("motion", "binary_sensor", None, None, "Измерение", "occupancy"),
+    ("open", "binary_sensor", "state", "door", "Измерение", "measurement"),
+    ("open", "binary_sensor", "state", "window", "Измерение", "measurement"),
+    ("open", "binary_sensor", "state", "opening", "Измерение", "measurement"),
+    ("open", "binary_sensor", None, None, "Contact", "measurement"),
+    ("open", "binary_sensor", None, None, "Измерение", "contact"),
+    ("water_leak", "binary_sensor", "state", "moisture", "Измерение", "measurement"),
+    ("smoke", "binary_sensor", "state", "smoke", "Измерение", "measurement"),
+    ("vibration", "binary_sensor", "state", "vibration", "Измерение", "measurement"),
+    ("gas", "binary_sensor", "state", "gas", "Измерение", "measurement"),
+    ("gas", "sensor", "state", "carbon_dioxide", "Измерение", "measurement"),
+    ("climate", "sensor", "state", "temperature", "Измерение", "measurement"),
+    ("climate", "sensor", "state", "humidity", "Измерение", "measurement"),
+    ("illumination", "sensor", "state", "illuminance", "Измерение", "measurement"),
+    ("button", "event", "state", "button", "Измерение", "measurement"),
+])
+async def test_sensor_type_filter_uses_object_class_or_classless_label(setup, subtype, domain,
+        class_source, device_class, label, suffix):
+    history, clock, api, ha = setup
+    api.catalog[0].update(name="Датчик", type="devices.types.sensor." + subtype)
+    ha.registries["devices"][0]["name"] = "Датчик"
+    ha.registries["entities"][0].update(entity_id=domain + ".unit_" + suffix, name=label)
+    ha.states[0].update(entity_id=domain + ".unit_" + suffix,
+        attributes={"device_class": device_class} if class_source == "state" else {})
+    if class_source in {"device_class", "original_device_class"}:
+        ha.registries["entities"][0][class_source] = device_class
+    # A battery object with the same device name/room must not pass the subtype.
+    ha.registries["devices"][2]["name"] = "Датчик"
+    ha.registries["entities"][2].update(entity_id="sensor.unit_battery", name="Battery")
+    ha.states[2].update(entity_id="sensor.unit_battery", attributes={"device_class": "battery"})
+    clock.advance(301)
+    await history.poll_once()
+    args = CandidateArgs(session_id=history.settings.session_id, device_ref=device_ref())
+    selected = history.matcher.entities[entity_ref(history, domain + ".unit_" + suffix)]
+    result = await history.candidates(args)
+    assert [row["ha_device_ref"] for row in result["device_candidates"]] == [selected["ha_device_ref"]]
+    assert [row["entity_ref"] for row in result["candidates"]] == [selected["entity_ref"]]
+    assert selected["device_class"] == device_class
+    relaxed = await history.candidates(args.model_copy(update={"match_type": False}))
+    assert {row["ha_device_ref"] for row in relaxed["device_candidates"]} == {
+        selected["ha_device_ref"], history.matcher.entities[entity_ref(history, "sensor.unit_battery")]["ha_device_ref"]}
+    await history.set_link(LinkArgs(**args.model_dump(), ha_device_ref=selected["ha_device_ref"],
+        entity_ref=selected["entity_ref"], method="suggestion"))
+
+
+@pytest.mark.parametrize("new_class", [None, "connectivity"])
+async def test_sensor_type_refresh_does_not_keep_a_stale_state_class(setup, new_class):
+    history, clock, api, ha = setup
+    api.catalog[0].update(type="devices.types.sensor.motion")
+    ha.registries["entities"][0]["entity_id"] = "binary_sensor.unit_measurement"
+    ha.states[0].update(entity_id="binary_sensor.unit_measurement", attributes={"device_class": "occupancy"})
+    clock.advance(301)
+    await history.poll_once()
+    args = CandidateArgs(session_id=history.settings.session_id, device_ref=device_ref())
+    result = await history.candidates(args)
+    target = result["device_candidates"][0]["ha_device_ref"]
+    selected = entity_ref(history, "binary_sensor.unit_measurement")
+    ha.states[0]["attributes"] = {"device_class": new_class} if new_class else {}
+    clock.advance()  # State refresh without reloading the registry.
+    await history.poll_once()
+    assert history.matcher.entities[selected]["device_class"] == new_class
+    assert (await history.candidates(args))["device_candidates"] == []
+    with pytest.raises(BrokerError, match="YANDEX_CANDIDATE_CHANGED"):
+        await history.set_link(LinkArgs(**args.model_dump(), ha_device_ref=target,
+            entity_ref=selected, method="suggestion"))
+
+
+async def test_sensor_type_does_not_infer_motion_from_diagnostic_device_prefixes(setup):
+    history, clock, api, ha = setup
+    api.catalog[0].update(type="devices.types.sensor.motion")
+    ha.registries["entities"][0].update(entity_id="binary_sensor.motion_battery", name="Motion battery")
+    ha.states[0].update(entity_id="binary_sensor.motion_battery", attributes={})
+    clock.advance(301)
+    await history.poll_once()
+    args = CandidateArgs(session_id=history.settings.session_id, device_ref=device_ref())
+    assert (await history.candidates(args))["device_candidates"] == []
+    # A declared incompatible class also wins over a misleading Occupancy label.
+    ha.states[0]["attributes"] = {"device_class": "battery", "friendly_name": "Occupancy"}
+    clock.advance()
+    await history.poll_once()
+    assert (await history.candidates(args))["device_candidates"] == []
+
+
+async def test_catalog_marks_existing_links_per_device_and_object_without_hiding_candidates(setup):
+    history, clock, api, ha = setup
+    args = CandidateArgs(session_id=history.settings.session_id, device_ref=device_ref())
+    initial = await history.candidates(args)
+    assert all(not row["linked_devices"] for row in initial["ha_devices"] + initial["entities"])
+    await history.set_link(link_args(history))
+    await history.set_link(link_args(history, entity_ref(history, "binary_sensor.lamp_connection"), device="y-other"))
+    result = await history.candidates(args)
+    target = result["device_candidates"][0]["ha_device_ref"]
+    lamp = next(row for row in result["ha_devices"] if row["ha_device_ref"] == target)
+    assert {row["device_ref"] for row in lamp["linked_devices"]} == {device_ref(), device_ref("y-other")}
+    assert all(row["device_name"] == "Светильник" and row["room_name"] == "Спальня"
+        and not row["needs_review"] for row in lamp["linked_devices"])
+    selected = next(row for row in result["entities"] if row["entity_ref"] == entity_ref(history))
+    assert [row["device_ref"] for row in selected["linked_devices"]] == [device_ref()]
+    assert "linked_devices" not in history.matcher.devices[target]  # Per-session annotations do not alter the registry.
+    await history.set_link(LinkArgs(session_id=args.session_id, device_ref=device_ref(), entity_ref=None))
+    lamp = next(row for row in (await history.candidates(args))["ha_devices"] if row["ha_device_ref"] == target)
+    assert [row["device_ref"] for row in lamp["linked_devices"]] == [device_ref("y-other")]
+    await history.set_link(link_args(history, entity_ref(history, "light.other"), device="y-other"))
+    result = await history.candidates(args)
+    assert not next(row for row in result["ha_devices"] if row["ha_device_ref"] == target)["linked_devices"]
+    assert sum(len(row["linked_devices"]) for row in result["ha_devices"]) == 1
+    api.catalog.pop(1)
+    clock.advance()
+    await history.poll_once()
+    assert all(not row["linked_devices"] for row in (await history.candidates(args))["ha_devices"])
+
+
+async def test_link_markers_are_scoped_to_account_and_flag_changed_identities(setup):
+    history, clock, api, ha = setup
+    await history.set_link(link_args(history))
+    api.catalog[0]["external_id"] = "replacement-device"
+    clock.advance()
+    await history.poll_once()
+    args = CandidateArgs(session_id=history.settings.session_id, device_ref=device_ref())
+    result = await history.candidates(args)
+    assert next(row for row in result["ha_devices"] if row["linked_devices"])["linked_devices"][0]["needs_review"]
+    await history.configure(YandexArgs(enabled=True, token="ANOTHER_ACCOUNT_TOKEN_123456"))
+    await history.poll_once()
+    new_args = args.model_copy(update={"session_id": history.settings.session_id})
+    result = await history.candidates(new_args)
+    assert all(not row["linked_devices"] for row in result["ha_devices"] + result["entities"])
 
 
 async def test_device_selection_rejects_objects_from_another_device_and_stale_membership(setup):

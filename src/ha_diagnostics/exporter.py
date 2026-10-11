@@ -29,6 +29,7 @@ from .export_schedule import ExportSchedule, ScheduleArgs, ScheduleStore
 from .redaction import IDENTIFIER_KEY, SECRET_KEY, Redactor
 from .yandex_history import YandexArgs, YandexEventsArgs, YandexHistory
 from .yandex_matching import CandidateArgs, LinkArgs, IdentityRuleArgs
+from .connection import ConnectionArgs, ConnectionEdit, ConnectionPanel
 
 EXPORT_ID = r"^export_[a-f0-9]{32}$"
 MAX_SOURCE_BYTES = 128 * 1024 * 1024
@@ -194,6 +195,11 @@ class ExportService:
         self._scheduler_task = None
         self._schedule_changed = asyncio.Event()
         self._clock = clock or (lambda: datetime.now(timezone.utc))
+        try:
+            self.connection = ConnectionPanel(sources, redactor,
+                self.directory.parent / "private" / "connection-panel.json", clock=self._clock)
+        except (OSError, ValueError):
+            self.connection = None
         self._yandex_error = None
         try:
             self.yandex = yandex_history or YandexHistory(self.directory.parent / "private",
@@ -306,6 +312,9 @@ class ExportService:
                 "cancel_export": (ExportArgs, self.cancel),
                 "delete_export": (ExportArgs, self.delete),
                 "set_export_schedule": (ScheduleArgs, self.set_schedule),
+                "connection_objects": (ConnectionArgs, self.connection_objects),
+                "connection_catalog": (ConnectionArgs, self.connection_catalog),
+                "set_connection_object": (ConnectionEdit, self.set_connection_object),
                 "set_yandex": (YandexArgs, self.set_yandex),
                 "yandex_events": (YandexEventsArgs, self.yandex_events),
                 "yandex_links": (EmptyExportArgs, self.yandex_links),
@@ -324,6 +333,21 @@ class ExportService:
             "limits": {"source_bytes": self.max_source_bytes, "export_bytes": self.max_export_bytes,
                        "manual_exports": EXPORT_LIMITS["manual"],
                        "automatic_exports": EXPORT_LIMITS["automatic"]}}
+
+    async def connection_objects(self, args):
+        if self.connection is None:
+            raise BrokerError("CONNECTION_UNAVAILABLE")
+        return await self.connection.panel(args) | {"timezone": self.schedule.timezone, "demo": self.demo}
+
+    async def connection_catalog(self, args):
+        if self.connection is None:
+            raise BrokerError("CONNECTION_UNAVAILABLE")
+        return await self.connection.catalog(args)
+
+    async def set_connection_object(self, args):
+        if self.connection is None:
+            raise BrokerError("CONNECTION_UNAVAILABLE")
+        return await self.connection.edit(args) | {"timezone": self.schedule.timezone, "demo": self.demo}
 
     async def set_yandex(self, args):
         if self.yandex is None:

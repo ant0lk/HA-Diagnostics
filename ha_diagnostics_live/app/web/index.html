@@ -10,13 +10,14 @@
   <header>
     <div class="logo" aria-hidden="true">HA<span>·</span>D</div>
     <div><h1>HA-Diagnostics</h1><p>Диагностика Home Assistant · только чтение</p></div>
-    <span class="badge">1.0.0-alpha.9</span>
+    <span class="badge">1.0.0-alpha.10</span>
   </header>
   <main>
     <nav class="page-tabs" role="tablist" aria-label="Разделы дополнения">
       <button id="tab-home" data-tab="home" role="tab" aria-controls="home" aria-selected="true" tabindex="0" class="active">Главная</button>
       <button id="tab-archive" data-tab="archive" role="tab" aria-controls="archive" aria-selected="false" tabindex="-1">Архив</button>
       <button id="tab-yandex" data-tab="yandex" role="tab" aria-controls="yandex" aria-selected="false" tabindex="-1">Умный дом Яндекса</button>
+      <button id="tab-connection" data-tab="connection" role="tab" aria-controls="connection" aria-selected="false" tabindex="-1">Связь и отключения</button>
     </nav>
     <article>
       <div id="notice" role="status" aria-live="polite">Загрузка состояния…</div>
@@ -32,7 +33,7 @@
           <div class="card"><strong>Только чтение</strong><p>Дополнение читает диагностические данные. Настройки подключения и сбора управляются из локальной панели.</p></div>
           <div class="card"><strong>Данные под вашим контролем</strong><p>Архивы хранятся в дополнении. Распознаваемые секреты удаляются до записи в ZIP; результаты чтения и пробелы указаны внутри каждого архива.</p></div>
         </div>
-        <div class="about-runtime"><h3>Состояние дополнения</h3><p id="addon-state">Загрузка сведений…</p><p>Версия <span id="addon-version">1.0.0-alpha.9</span> · Home Assistant OS</p></div>
+        <div class="about-runtime"><h3>Состояние дополнения</h3><p id="addon-state">Загрузка сведений…</p><p>Версия <span id="addon-version">1.0.0-alpha.10</span> · Home Assistant OS</p></div>
         <div data-workflow="legacy" hidden>
 <details class="legacy-card"><summary>Подключение ChatGPT</summary><p>Подключите домашний MCP через Secure MCP Tunnel. Сначала создайте туннель в OpenAI Platform, затем сохраните его параметры здесь.</p><form id="tunnel-form" autocomplete="off"><label for="tunnel-id">Tunnel ID</label><input id="tunnel-id" name="tunnel-id" type="text" placeholder="tunnel_…" maxlength="107" required pattern="tunnel_[a-zA-Z0-9]{8,100}" spellcheck="false" autocomplete="off"><label for="tunnel-key">Runtime API key туннеля</label><input id="tunnel-key" name="tunnel-key" type="password" maxlength="8192" required autocomplete="new-password" spellcheck="false"><p>Ключ сохраняется локально и не показывается повторно. Это ключ транспорта OpenAI, а не токен Home Assistant. Для замены введите новый ключ.</p><button id="save-tunnel" type="submit">Сохранить туннель</button></form><p id="tunnel-state" role="status" aria-live="polite"></p><p>После сохранения перезапустите HA-Diagnostics через страницу приложения в Home Assistant. Затем выберите этот туннель при создании MCP в ChatGPT.</p><p>OAuth настраивается отдельно. Сохранение туннеля не включает удалённый доступ и не подтверждает подключение ChatGPT.</p><p id="transport-state"></p><button id="revoke">Отключить доступ ChatGPT</button></details>
 <details class="legacy-card"><summary>Доступ и приватность</summary><p>Очистка уменьшает раскрытие, но не гарантирует удаление любого неизвестного секрета. Уже отправленные сведения остаются в чате по условиям аккаунта OpenAI. Отзыв действует на следующие вызовы.</p><label>Настройки этого приложения (без секретов)<textarea id="policy" spellcheck="false" rows="18"></textarea></label><button id="save-policy">Сохранить локально</button><p>OAuth subject владельца подтверждается локально. MCP не имеет права менять настройки.</p></details>
@@ -68,6 +69,48 @@
 <details class="legacy-card"><summary>Диагностические сущности</summary><p>Камеры, медиа, геопозиция, данные присутствия и чувствительные домены исключены. Snapshot показывает состояние в момент наблюдения, история Recorder — отдельный источник.</p><button id="select-entities">Выбрать все допустимые сущности</button><pre id="entity-list"></pre></details>
 <details class="legacy-card"><summary>Архив и импорт</summary><p>Только .log, .txt и .json до 20 MiB. Исходный файл не сохраняется. Сначала проверьте очищенный предпросмотр.</p><input id="file" type="file" accept=".log,.txt,.json"><button id="preview">Предпросмотр</button><pre id="preview-content"></pre><label><input type="checkbox" id="share-import">Разрешить ChatGPT этот импорт</label><button id="commit" disabled>Сохранить очищенную копию</button><h3>Импортированные материалы</h3><div id="artifact-list"></div><pre id="artifact-content"></pre><h3>Проверить запись по evidence ID</h3><label>Идентификатор записи <input id="evidence-id" placeholder="rec_…" maxlength="36"></label><button id="show-evidence">Показать очищенную запись</button><pre id="evidence-content"></pre><button id="delete">Удалить собственный архив</button></details>
         </div>
+      </section>
+      <section id="connection" data-page role="tabpanel" aria-labelledby="tab-connection" tabindex="0" hidden>
+        <div class="page-heading"><span class="eyebrow">СОСТОЯНИЕ СВЯЗИ</span><h2>Связь и отключения</h2><p>Качество сигнала, доступность и давность обновления объектов Home Assistant. Активированные и деактивированные объекты показаны вместе.</p></div>
+        <div class="connection-toolbar">
+          <button id="refresh-connection">Обновить</button>
+          <button id="open-connection-add" class="primary">Добавить объект</button>
+          <span>Данные обновляются каждые 15 секунд, пока вкладка открыта.</span>
+        </div>
+        <p id="connection-state" role="status" aria-live="polite">Загрузка объектов…</p>
+        <p id="connection-summary"></p>
+        <div class="connection-filters">
+          <label for="connection-search">Поиск объектов<input id="connection-search" type="search" placeholder="Название, ID, устройство или комната" autocomplete="off"></label>
+          <label for="connection-filter">Показать<select id="connection-filter"><option value="all">Все объекты</option><option value="poor">Плохое качество</option><option value="unavailable">Нет связи или данных</option><option value="disabled">Деактивированные в HA</option><option value="custom">Добавленные вручную</option></select></label>
+        </div>
+        <div class="connection-columns" aria-hidden="true"><span>Объект</span><span>Значение</span><span>Данные обновились</span><span></span></div>
+        <ul id="connection-list" class="connection-list" aria-label="Показатели связи"></ul>
+        <details id="connection-hidden" class="connection-details"><summary id="connection-hidden-title">Скрытые объекты</summary><ul id="connection-hidden-list" class="connection-list" aria-label="Скрытые показатели связи"></ul></details>
+        <details class="connection-details">
+          <summary>Цвета и диапазоны</summary>
+          <div class="connection-legend"><span class="quality-1">Критично</span><span class="quality-2">Плохо</span><span class="quality-3">Средне</span><span class="quality-4">Хорошо</span><span class="quality-5">Отлично</span></div>
+          <div class="connection-scale-table"><table><thead><tr><th>Показатель</th><th>Красный</th><th>Оранжевый</th><th>Жёлтый</th><th>Салатовый</th><th>Зелёный</th></tr></thead><tbody>
+            <tr><th>LQI · 0–255</th><td>0–50</td><td>51–101</td><td>102–152</td><td>153–203</td><td>204–255</td></tr>
+            <tr><th>RSSI · dBm</th><td>&lt; −90</td><td>−90…&lt; −80</td><td>−80…&lt; −70</td><td>−70…&lt; −60</td><td>≥ −60</td></tr>
+            <tr><th>Сигнал · %</th><td>0…&lt; 20</td><td>20…&lt; 40</td><td>40…&lt; 60</td><td>60…&lt; 80</td><td>80–100</td></tr>
+            <tr><th>Сигнал/шум · dB</th><td>&lt; 5</td><td>5…&lt; 10</td><td>10…&lt; 20</td><td>20…&lt; 30</td><td>≥ 30</td></tr>
+            <tr><th>Задержка · ms</th><td>&gt; 250</td><td>&gt; 100…250</td><td>&gt; 50…100</td><td>&gt; 20…50</td><td>0–20</td></tr>
+            <tr><th>Потери пакетов · %</th><td>&gt; 25</td><td>&gt; 10…25</td><td>&gt; 5…10</td><td>&gt; 1…5</td><td>0–1</td></tr>
+          </tbody></table></div>
+          <p class="export-note">Диапазоны — ориентировочная оценка. У датчиков доступности зелёный означает наличие связи, красный — её отсутствие. Неизвестные значения и объекты без подходящей шкалы показаны нейтральным цветом.</p>
+        </details>
+        <p class="export-note">Давность отсчитывается от последнего отчёта объекта в HA; если это время недоступно — от последнего изменения данных. Через сутки показываются дата и время. Деактивированный объект может не иметь состояния и времени обновления. Спящие устройства обновляются редко: давность сама по себе не означает отключение.</p>
+        <dialog id="connection-add-dialog" aria-labelledby="connection-add-title">
+          <div class="history-heading"><h3 id="connection-add-title">Добавить свой объект</h3><button id="close-connection-add" type="button" aria-label="Закрыть добавление объекта">Закрыть</button></div>
+          <form id="connection-add-form">
+            <label for="connection-add-search">Поиск в Home Assistant</label><input id="connection-add-search" type="search" placeholder="Название, ID, устройство или комната" autocomplete="off">
+            <label for="connection-add-select">Объект</label><select id="connection-add-select" size="6" required></select>
+            <p id="connection-add-state" class="export-note" role="status" aria-live="polite"></p>
+            <label for="connection-add-scale">Оценка значения</label><select id="connection-add-scale"><option value="auto">Определить автоматически</option><option value="lqi">LQI · 0–255</option><option value="dbm">Уровень сигнала · dBm</option><option value="percent">Качество сигнала · 0–100 %</option><option value="snr">Сигнал/шум · dB</option><option value="latency">Задержка · ms (или s)</option><option value="packet_loss">Потери пакетов · 0–100 %</option><option value="none">Без цветовой оценки</option></select>
+            <p class="export-note">Можно выбрать любой существующий объект, включая деактивированные. Для произвольного показателя выберите подходящую шкалу или оставьте нейтральный цвет. Повторный выбор меняет шкалу уже добавленного объекта.</p>
+            <button id="confirm-connection-add" class="primary" type="submit" disabled>Добавить</button>
+          </form>
+        </dialog>
       </section>
       <section id="yandex" data-page role="tabpanel" aria-labelledby="tab-yandex" tabindex="0" hidden>
         <div class="page-heading"><span class="eyebrow">ИНТЕГРАЦИЯ</span><h2>Умный дом Яндекса</h2><p>Наблюдайте за доступностью устройств и сохраняйте историю в диагностическом архиве.</p></div>
@@ -119,7 +162,7 @@
             <p id="ha-link-state" role="status" aria-live="polite"></p>
             <fieldset class="matching-filters" aria-describedby="ha-match-filter-note">
               <legend>Фильтры подбора</legend>
-              <p class="export-note">По умолчанию все включены. Отключите лишние фильтры, чтобы расширить поиск. Название может совпадать частично.</p>
+              <p class="export-note">По умолчанию все включены. Отключите лишние фильтры, чтобы расширить поиск. Название сравнивается с устройством и его объектами и может совпадать частично. Тип определяется по назначению объектов.</p>
               <div class="matching-filter-options">
                 <label class="matching-filter"><input id="ha-match-name" type="checkbox" checked><span><strong>Название</strong><small id="ha-match-name-value"></small></span></label>
                 <label class="matching-filter"><input id="ha-match-room" type="checkbox" checked><span><strong>Комната</strong><small id="ha-match-room-value"></small></span></label>

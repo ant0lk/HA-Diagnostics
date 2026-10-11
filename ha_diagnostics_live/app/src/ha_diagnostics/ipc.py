@@ -24,7 +24,8 @@ QUERY_UID = 10002
 ADMIN_OPERATIONS = frozenset({"admin_status", "discover_sources", "discover_entities", "import_preview",
     "import_commit", "set_policy", "revoke_access", "delete_archive", "pause_collection", "read_local_artifact", "approve_artifact", "delete_artifact", "read_evidence", "tunnel_status", "save_tunnel",
     "start_export", "export_status", "export_download", "cancel_export", "delete_export", "set_export_schedule", "set_yandex", "yandex_events",
-    "yandex_links", "yandex_candidates", "set_yandex_link", "set_yandex_identity_rule"})
+    "yandex_links", "yandex_candidates", "set_yandex_link", "set_yandex_identity_rule",
+    "connection_objects", "connection_catalog", "set_connection_object"})
 
 
 class IPCError(Exception):
@@ -42,7 +43,8 @@ class IPCEnvelope(BaseModel):
     op: Literal["admin_status", "discover_sources", "discover_entities", "import_preview", "import_commit",
                 "set_policy", "revoke_access", "delete_archive", "pause_collection", "read_local_artifact", "approve_artifact", "delete_artifact", "read_evidence", "tunnel_status", "save_tunnel",
                 "start_export", "export_status", "export_download", "cancel_export", "delete_export", "set_export_schedule", "set_yandex", "yandex_events",
-                "yandex_links", "yandex_candidates", "set_yandex_link", "set_yandex_identity_rule"]
+                "yandex_links", "yandex_candidates", "set_yandex_link", "set_yandex_identity_rule",
+                "connection_objects", "connection_catalog", "set_connection_object"]
     args: dict[str, Any] = Field(default_factory=dict)
 
 

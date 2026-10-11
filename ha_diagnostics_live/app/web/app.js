@@ -6,6 +6,8 @@ let activeTab='home', yandexEvents=[], yandexSession, yandexNext, yandexEventsLo
 let yandexFilter='all', yandexHistoryRevision, yandexEventGeneration=0, yandexRefreshQueued=false;
 let yandexHistoryPending=0, yandexBackfillTimer;
 let matchingData, matchingLoading=false, ruleDirty=false, haEditor, haEditorGeneration=0;
+let connectionData, connectionCatalog=[], connectionLoading=false, connectionSaving=false, connectionPoll;
+let connectionGeneration=0, connectionReceivedAt=0, connectionClock=0, connectionCatalogError='';
 const haMatchFilters=[{key:'match_name',id:'ha-match-name',label:'название'},
   {key:'match_room',id:'ha-match-room',label:'комната'},{key:'match_type',id:'ha-match-type',label:'тип устройства'}];
 const el=id=>document.getElementById(id);
@@ -30,8 +32,9 @@ function renderAddon(){
   el('addon-state').textContent=status.demo?'Демонстрационный режим · используются тестовые данные.':zip?(status.available?'Дополнение готово к сбору диагностического архива.':'Home Assistant недоступен. Для сбора нужен Live-профиль с доступом к Supervisor API.'):(status.mode==='live'?'Live-профиль · локальный диагностический архив.':'Режим импорта · локальный диагностический архив.');
 }
 function selectTab(id,focus=false){
-  if(!['home','archive','yandex'].includes(id))return;
+  if(!['home','archive','yandex','connection'].includes(id))return;
   activeTab=id;
+  el('notice').hidden=id==='connection';
   document.querySelectorAll('[data-page]').forEach(page=>page.hidden=page.id!==id);
   document.querySelectorAll('[data-tab]').forEach(tab=>{
     const selected=tab.dataset.tab===id;
@@ -39,6 +42,160 @@ function selectTab(id,focus=false){
     if(selected&&focus)tab.focus();
   });
   if(id==='yandex'&&status){refreshYandexEvents();refreshYandexLinks();}
+  clearTimeout(connectionPoll);
+  if(id==='connection'&&status)refreshConnection();
+}
+const connectionLevels=['','Критично','Плохо','Средне','Хорошо','Отлично'];
+const connectionErrors={CONNECTION_UNAVAILABLE:'Не удалось загрузить показатели связи.',
+  CONNECTION_SAVE_FAILED:'Не удалось сохранить список объектов. Повторите попытку.',
+  CONNECTION_OBJECT_NOT_FOUND:'Объект больше не найден в HA. Обновите список.',
+  CONNECTION_SETTINGS_INVALID:'Сохранённые настройки списка повреждены или недоступны. Их изменение временно заблокировано.',
+  CONNECTION_ENTITY_LIMIT:'В HA больше 5000 объектов. Предел списка этой версии панели превышен.'};
+function connectionDate(value){
+  const options={dateStyle:'short',timeStyle:'medium'};
+  const zone=connectionData?.timezone||(status?.schedule||{}).timezone||status?.ha_timezone;
+  if(zone)options.timeZone=zone;
+  return new Intl.DateTimeFormat('ru-RU',options).format(new Date(value));
+}
+function connectionAge(value,now=connectionClock+performance.now()-connectionReceivedAt){
+  if(!value||!Number.isFinite(Date.parse(value)))return 'Нет времени обновления';
+  const seconds=Math.floor((now-Date.parse(value))/1000);
+  if(seconds<0)return 'Время обновления в будущем';
+  if(seconds>=86400)return connectionDate(value);
+  if(seconds<60)return seconds+' сек. назад';
+  if(seconds<3600)return Math.floor(seconds/60)+' мин. '+seconds%60+' сек. назад';
+  return Math.floor(seconds/3600)+' ч. '+Math.floor(seconds%3600/60)+' мин. назад';
+}
+function tickConnectionAges(){
+  if(activeTab!=='connection'||document.hidden||!connectionData)return;
+  document.querySelectorAll('[data-connection-time]').forEach(time=>{time.textContent=connectionAge(time.dataset.connectionTime);});
+}
+function acceptConnection(data){
+  connectionData=data;connectionClock=Date.parse(data.time);connectionReceivedAt=performance.now();renderConnection();
+}
+function scheduleConnectionRefresh(){
+  clearTimeout(connectionPoll);
+  if(activeTab==='connection'&&!document.hidden)connectionPoll=setTimeout(()=>refreshConnection(),15000);
+}
+async function refreshConnection(force=false){
+  if(connectionLoading||connectionSaving||document.hidden)return;
+  if(status?.workflow!=='zip_export'){
+    el('connection-state').textContent='Для показателей связи нужен профиль диагностического ZIP с доступом к Home Assistant.';return;
+  }
+  connectionLoading=true;el('refresh-connection').disabled=true;
+  const generation=connectionGeneration;
+  try{
+    const response=await fetch('api/connection'+(force?'?force=true':''),{cache:'no-store'}),data=await response.json();
+    if(!response.ok)throw Error(connectionErrors[data.error]||'Не удалось прочитать объекты Home Assistant.');
+    if(generation===connectionGeneration)acceptConnection(data);
+  }catch(error){
+    if(generation===connectionGeneration){
+      el('connection-state').textContent=error.message+(connectionData?' Показан последний полученный снимок.':'');
+      el('connection-list').classList.toggle('connection-stale',!!connectionData);
+    }
+  }finally{connectionLoading=false;el('refresh-connection').disabled=connectionSaving;scheduleConnectionRefresh();}
+}
+async function editConnection(ref,kind,scale='auto'){
+  if(connectionSaving)return;
+  connectionSaving=true;connectionGeneration++;clearTimeout(connectionPoll);renderConnection();
+  el('confirm-connection-add').disabled=true;
+  try{
+    const response=await fetch('api/action',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},
+      body:JSON.stringify({op:'set_connection_object',args:{object_ref:ref,action:kind,scale}}),cache:'no-store'});
+    const data=await response.json();
+    if(!response.ok)throw Error(connectionErrors[data.error]||'Не удалось изменить список объектов.');
+    acceptConnection(data);return true;
+  }catch(error){el('connection-state').textContent=error.message;el('connection-add-state').textContent=error.message;return false;}
+  finally{connectionSaving=false;renderConnectionRows();el('refresh-connection').disabled=false;
+    el('open-connection-add').disabled=!!connectionData?.settings_error;updateConnectionChoice();scheduleConnectionRefresh();}
+}
+function connectionMatches(row,search){
+  return [row.name,row.entity_id,row.device_name,row.room_name].some(value=>(value||'').toLocaleLowerCase('ru').includes(search));
+}
+function connectionValue(row){
+  if(row.state===null||row.state==='')return 'Нет данных';
+  const state={unavailable:'Недоступно',unknown:'Неизвестно'}[row.state]||row.state;
+  if(row.scale==='none'&&Number.isFinite(Date.parse(row.state))&&/^\d{4}-\d{2}-\d{2}T/.test(row.state))return connectionDate(row.state);
+  return state+(row.unit?' '+row.unit:'');
+}
+function connectionRow(row,hidden=false){
+  const item=document.createElement('li');item.className='connection-row';item.dataset.objectRef=row.object_ref;
+  const identity=document.createElement('div'),name=document.createElement('strong'),detail=document.createElement('small');
+  name.textContent=row.name;detail.textContent=[row.entity_id,row.device_name,row.room_name].filter(Boolean).join(' · ');
+  const badges=document.createElement('div');badges.className='connection-badges';
+  for(const label of [row.disabled?'Деактивирован в HA':null,row.custom?'Добавлен вручную':null,row.missing?'Объект не найден':null,row.assumed?'Предполагаемое значение':null].filter(Boolean)){
+    const badge=document.createElement('span');badge.textContent=label;badges.append(badge);
+  }
+  identity.append(name,detail,badges);
+  const value=document.createElement('div'),number=document.createElement('strong'),quality=document.createElement('small');
+  value.className='connection-value';number.className=row.level?'quality-'+row.level:'quality-neutral';number.textContent=connectionValue(row);
+  quality.textContent=row.level?connectionLevels[row.level]+' · '+row.level+'/5':row.state===null?'Состояние отсутствует':'Без оценки';
+  value.append(number,quality);
+  const updated=document.createElement('div'),time=document.createElement('time'),source=document.createElement('small');
+  updated.className='connection-age';time.dataset.connectionTime=row.updated_at||'';time.textContent=connectionAge(row.updated_at);
+  if(row.updated_at){time.dateTime=row.updated_at;time.title='Последнее обновление: '+connectionDate(row.updated_at);}
+  source.textContent=row.timestamp_source==='last_reported'?'Последний отчёт в HA':row.timestamp_source==='last_updated'?'Последнее изменение данных':row.disabled?'HA не предоставляет данные':'Время не предоставлено';
+  updated.append(time,source);
+  const actions=document.createElement('div');actions.className='connection-row-actions';
+  const toggle=button(hidden?'Показать':'Скрыть',async()=>{await editConnection(row.object_ref,hidden?'show':'hide');});
+  toggle.disabled=connectionSaving||!!connectionData.settings_error;toggle.setAttribute('aria-label',(hidden?'Показать ':'Скрыть ')+row.name);actions.append(toggle);
+  if(row.custom){
+    const remove=button(row.automatic?'Сбросить шкалу':'Убрать',async()=>{await editConnection(row.object_ref,'remove');});
+    remove.disabled=toggle.disabled;remove.setAttribute('aria-label',(row.automatic?'Сбросить ручную шкалу ':'Убрать добавленный объект ')+row.name);actions.append(remove);
+  }
+  item.append(identity,value,updated,actions);return item;
+}
+function renderConnectionRows(){
+  if(!connectionData)return;
+  const rows=connectionData.objects||[],search=el('connection-search').value.trim().toLocaleLowerCase('ru'),filter=el('connection-filter').value;
+  const list=el('connection-list'),hiddenList=el('connection-hidden-list');list.replaceChildren();hiddenList.replaceChildren();
+  const visible=rows.filter(row=>!row.hidden),hidden=rows.filter(row=>row.hidden);
+  const filtered=visible.filter(row=>connectionMatches(row,search)&&({all:true,poor:row.level!==null&&row.level<=2,
+    unavailable:row.scale==='none'&&row.level===1||row.state===null||['unknown','unavailable'].includes(row.state)||row.missing,
+    disabled:row.disabled,custom:row.custom}[filter]));
+  for(const row of filtered)list.append(connectionRow(row));
+  if(!filtered.length){const empty=document.createElement('li');empty.className='connection-empty';empty.textContent=visible.length?'По этим условиям объектов нет.':hidden.length?'Все объекты скрыты. Верните их из списка ниже или добавьте свои.':'Подходящие объекты пока не найдены. Добавьте свой объект или обновите список.';list.append(empty);}
+  for(const row of hidden)hiddenList.append(connectionRow(row,true));
+  el('connection-hidden').hidden=!hidden.length;el('connection-hidden-title').textContent='Скрытые объекты · '+hidden.length;
+  el('connection-summary').textContent='В списке: '+visible.length+' · плохое качество: '+visible.filter(row=>row.level!==null&&row.level<=2).length+
+    ' · деактивировано: '+visible.filter(row=>row.disabled).length+(filtered.length!==visible.length?' · по фильтру: '+filtered.length:'');
+}
+function renderConnection(){
+  if(!connectionData)return;
+  const warnings=[];
+  if(connectionData.demo)warnings.push('Демонстрационные данные.');
+  if(connectionData.states_error)warnings.push(connectionErrors[connectionData.states_error]||
+    (connectionData.observed_at?'Home Assistant недоступен. Показан последний снимок от '+connectionDate(connectionData.observed_at)+'.':'Состояния Home Assistant недоступны.'));
+  if(connectionData.registry_error)warnings.push(connectionData.registry_error==='CONNECTION_LABELS_UNAVAILABLE'?'Часть названий устройств и комнат недоступна.':'Реестр HA недоступен. Список деактивированных объектов может быть неполным.');
+  if(connectionData.settings_error)warnings.push(connectionErrors[connectionData.settings_error]);
+  el('connection-state').textContent=warnings.join(' ')||'Снимок HA: '+(connectionData.observed_at?connectionDate(connectionData.observed_at):'нет данных');
+  el('connection-list').classList.toggle('connection-stale',!!connectionData.states_error);
+  el('open-connection-add').disabled=connectionSaving||!!connectionData.settings_error;
+  el('refresh-connection').disabled=connectionSaving||connectionLoading;
+  renderConnectionRows();
+}
+function renderConnectionCatalog(){
+  const select=el('connection-add-select'),previous=select.value,search=el('connection-add-search').value.trim().toLocaleLowerCase('ru');
+  const rows=connectionCatalog.filter(row=>connectionMatches(row,search)).sort((a,b)=>a.name.localeCompare(b.name,'ru')||a.entity_id.localeCompare(b.entity_id));
+  select.replaceChildren(new Option('Выберите объект',''));
+  for(const row of rows)select.add(new Option([row.name,row.entity_id,row.device_name,row.room_name,row.disabled?'деактивирован в HA':null].filter(Boolean).join(' · '),row.object_ref));
+  if(rows.some(row=>row.object_ref===previous))select.value=previous;
+  el('connection-add-state').textContent=connectionCatalogError||(rows.length?'Найдено объектов: '+rows.length:'Объектов по этому запросу нет.');
+  updateConnectionChoice();
+}
+function updateConnectionChoice(){el('confirm-connection-add').disabled=connectionSaving||!el('connection-add-select').value;}
+async function openConnectionAdd(){
+  if(status?.workflow!=='zip_export')return;
+  const dialog=el('connection-add-dialog');el('connection-add-search').value='';el('connection-add-scale').value='auto';
+  connectionCatalog=[];connectionCatalogError='';renderConnectionCatalog();el('connection-add-state').textContent='Загрузка всех объектов HA…';
+  dialog.showModal();
+  try{
+    const response=await fetch('api/connection/catalog?force=true',{cache:'no-store'}),data=await response.json();
+    if(!response.ok)throw Error('Не удалось загрузить объекты HA. Закройте окно и повторите попытку.');
+    connectionCatalog=data.objects||[];
+    connectionCatalogError=data.registry_error?'Реестр HA прочитан не полностью. Можно выбрать доступные объекты.':'';
+    renderConnectionCatalog();
+  }catch(error){el('connection-add-state').textContent=error.message;}
 }
 function renderSchedule(){
   const schedule=status.schedule||{};
@@ -192,13 +349,26 @@ function renderHaFilters(){
     switch:'Выключатель',sensor:'Датчик',smart_meter:'Счётчик',thermostat:'Термостат',thermostat_ac:'Кондиционер',
     humidifier:'Увлажнитель',purifier:'Очиститель воздуха',fan:'Вентилятор',openable:'Шторы или ворота',
     vacuum_cleaner:'Робот-пылесос',camera:'Камера',media_device:'Медиаустройство',smart_speaker:'Умная колонка'};
-  el('ha-match-type-value').textContent=types[type.split('.')[0]]||'Другое устройство';
+  const subtypes={'sensor.motion':'Датчик движения','sensor.open':'Датчик открытия','sensor.water_leak':'Датчик протечки',
+    'sensor.smoke':'Датчик дыма','sensor.vibration':'Датчик вибрации','sensor.gas':'Датчик газа',
+    'sensor.climate':'Датчик климата','sensor.illumination':'Датчик освещённости','sensor.button':'Умная кнопка',
+    'ventilation.fan':'Вентилятор',ventilation:'Вентиляция','thermostat.ac':'Кондиционер'};
+  el('ha-match-type-value').textContent=subtypes[type]||types[type.split('.')[0]]||'Другое устройство';
   const active=haMatchFilters.filter(filter=>haEditor.filters[filter.key]);
   haEditor.method=active.length?'suggestion':'manual';
   el('ha-match-filter-note').textContent=active.length?'Включены: '+active.map(filter=>filter.label).join(', ')+'.':
     'Все фильтры выключены — доступны все устройства HA и объекты без устройства.';
   el('ha-link-title').textContent=active.length?'Подбор устройства Home Assistant':'Выбор устройства Home Assistant';
   el('manual-ha-link').hidden=!active.length;
+}
+function haLinkMarker(target){
+  return target?.linked_devices?.length?'Уже связано · ':'';
+}
+function haLinkDescription(target){
+  const links=target?.linked_devices||[];
+  return links.length?'Уже связано с устройствами Яндекса: '+links.map(link=>'«'+link.device_name+'»'+
+    (link.room_name?' ('+link.room_name+')':'')+(link.device_ref===haEditor.device.device_ref?' — это устройство':'')+
+    (link.needs_review?' — связь требует проверки':'')).join(', ')+'.':'';
 }
 function renderHaDevices(){
   if(!haEditor)return;
@@ -211,9 +381,7 @@ function renderHaDevices(){
     a.name.localeCompare(b.name,'ru')||(a.room_name||'').localeCompare(b.room_name||'','ru'));
   select.replaceChildren(new Option('Выберите устройство HA',''));
   for(const device of devices.slice(0,100)){
-    const candidate=candidates.get(device.ha_device_ref);
-    const reasons=candidate?.reasons.length?' · '+candidate.reasons.map(value=>({type:'тип устройства',name:'название',similar_name:'похожее название',room:'комната'})[value]).join(', '):'';
-    select.add(new Option([device.name,device.room_name,...device.platforms,'объектов: '+device.entity_count].filter(Boolean).join(' · ')+reasons,device.ha_device_ref));
+    select.add(new Option(haLinkMarker(device)+[device.name,device.room_name,...device.platforms,'объектов: '+device.entity_count].filter(Boolean).join(' · '),device.ha_device_ref));
   }
   const unassigned=haEditor.loading||haEditor.requestError?[]:haEditor.entities.filter(entity=>!entity.ha_device_ref);
   if(haEditor.method==='manual'&&unassigned.length&&(!search||'объекты без устройства'.includes(search)))
@@ -236,12 +404,13 @@ function renderHaChoices(){
   if(!haEditor)return;
   const deviceRef=el('ha-device-select').value,target=haEditor.devices.find(device=>device.ha_device_ref===deviceRef);
   el('ha-entity-choices').hidden=!deviceRef;
-  el('ha-device-detail').textContent=target?[target.manufacturer,target.model,target.room_name,...target.platforms].filter(Boolean).join(' · '):'';
+  el('ha-device-detail').textContent=target?[[target.manufacturer,target.model,target.room_name,...target.platforms].filter(Boolean).join(' · '),
+    haLinkDescription(target)].filter(Boolean).join('. '):'';
   const search=el('ha-entity-search').value.trim().toLocaleLowerCase('ru'),select=el('ha-entity-select'),previous=select.value;
   const all=haDeviceEntities(),entities=all.filter(entity=>[entity.name,entity.entity_id,entity.room_name,entity.platform].some(value=>(value||'').toLocaleLowerCase('ru').includes(search)));
   select.replaceChildren(new Option('Выберите объект HA',''));
   for(const entity of entities){
-    const option=new Option(entity.name+' · '+entity.entity_id+(entity.disabled?' · отключён в HA':''),entity.entity_ref);
+    const option=new Option(haLinkMarker(entity)+entity.name+' · '+entity.entity_id+(entity.disabled?' · отключён в HA':''),entity.entity_ref);
     option.disabled=entity.disabled;select.add(option);
   }
   if([...select.options].some(option=>option.value===previous&&!option.disabled))select.value=previous;
@@ -259,7 +428,8 @@ function updateHaChoice(){
   const entity=haDeviceEntities().find(value=>value.entity_ref===el('ha-entity-select').value);
   el('confirm-ha-link').disabled=!entity||entity.disabled||!!haEditor?.error||!!haEditor?.requestError||!!haEditor?.loading;
   el('ha-entity-detail').textContent=entity?(entity.room_name||'Без комнаты')+' · '+(entity.platform||'Без интеграции')+
-    (entity.stable?'':' · У объекта нет устойчивого ID: после переименования понадобится новая привязка.') :'';
+    (entity.stable?'':' · У объекта нет устойчивого ID: после переименования понадобится новая привязка.')+
+    (entity.linked_devices?.length?' · '+haLinkDescription(entity):'') :'';
 }
 async function refreshHaCandidates(){
   if(!haEditor)return;
@@ -405,6 +575,7 @@ function renderArtifacts(){
 async function refresh(){
   const r=await fetch('api/status');if(!r.ok)throw Error('Административная сессия не подтверждена');status=await r.json();csrf=status.csrf;
   renderAddon();
+  if(activeTab==='connection'&&!connectionData&&!connectionLoading)refreshConnection();
   if(status.workflow==='zip_export'){renderExports();return;}
   renderYandex();
   el('metrics').replaceChildren(card('Режим',status.mode==='live'?'Live · настройка':'Импорт'),card('Собственный архив',(status.storage_bytes/1048576).toFixed(1)+' MiB'),card('Часовой пояс HA',status.ha_timezone));
@@ -430,6 +601,22 @@ document.querySelectorAll('[data-tab]').forEach(tab=>{
   });
 });
 document.querySelectorAll('[data-open-tab]').forEach(button=>button.addEventListener('click',()=>selectTab(button.dataset.openTab,true)));
+bind('refresh-connection',async()=>{await refreshConnection(true);});
+bind('open-connection-add',openConnectionAdd);
+bind('close-connection-add',async()=>{el('connection-add-dialog').close();});
+el('connection-search').addEventListener('input',renderConnectionRows);
+el('connection-filter').addEventListener('change',renderConnectionRows);
+el('connection-add-search').addEventListener('input',renderConnectionCatalog);
+el('connection-add-select').addEventListener('change',updateConnectionChoice);
+el('connection-add-form').addEventListener('submit',async event=>{
+  event.preventDefault();
+  if(await editConnection(el('connection-add-select').value,'add',el('connection-add-scale').value))el('connection-add-dialog').close();
+});
+setInterval(tickConnectionAges,1000);
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden)clearTimeout(connectionPoll);
+  else if(activeTab==='connection')refreshConnection();
+});
 function bind(id,fn){el(id).addEventListener('click',()=>fn().catch(e=>notice(e.message)));}
 bind('discover',async()=>{const d=await action('discover_sources');renderSources(d.sources.map(s=>({...s,collect:true,disclose:false})));notice('Найденные источники отмечены для сбора; передачу выберите отдельно.');});
 bind('save-sources',async()=>{const p={...status.policy};p.sources=[...document.querySelectorAll('.source[data-source]')].map(d=>({source_id:d.dataset.source,collect:d.querySelector('[data-key=collect]').checked,disclose:d.querySelector('[data-key=disclose]').checked}));p.collection_enabled=true;await action('set_policy',{policy:p});await refresh();});

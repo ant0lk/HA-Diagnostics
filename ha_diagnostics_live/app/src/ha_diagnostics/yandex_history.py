@@ -642,7 +642,7 @@ class YandexHistory:
         await self.matcher.refresh()
         return {"candidates": self.matcher.suggestions(args.session_id, args.device_ref, args),
             "device_candidates": self.matcher.device_suggestions(args.session_id, args.device_ref, args),
-            **self.matcher.ha_catalog(),
+            **self.matcher.ha_catalog(args.session_id),
             "ha_error": self.matcher.error}
 
     async def set_link(self, args):

@@ -159,6 +159,22 @@ def create_ui(admin_client, *, gate, web_dir, audit_path=None, transport_client=
             return JSONResponse(result,headers={"Cache-Control":"no-store"})
         except Exception:
             return JSONResponse({"error":"YANDEX_MATCHING_UNAVAILABLE"},status_code=503,headers={"Cache-Control":"no-store"})
+    async def connection_objects(request):
+        if not gate.allow(request):
+            return JSONResponse({"error":"ACCESS_DENIED"},status_code=403,headers={"Cache-Control":"no-store"})
+        try:
+            from .connection import ConnectionArgs
+            params=request.query_params
+            if set(params)-{"force"} or any(len(params.getlist(key))!=1 for key in params):raise ValueError()
+            if "force" in params and params["force"] not in {"true","false"}:raise ValueError()
+            args=ConnectionArgs(force=params.get("force")=="true")
+        except ValueError:
+            return JSONResponse({"error":"CONNECTION_REQUEST_REJECTED"},status_code=400,headers={"Cache-Control":"no-store"})
+        try:
+            result=await admin_client.request("connection_catalog" if request.url.path.endswith("catalog") else "connection_objects",args.model_dump())
+            return JSONResponse(result,headers={"Cache-Control":"no-store"})
+        except Exception:
+            return JSONResponse({"error":"CONNECTION_UNAVAILABLE"},status_code=503,headers={"Cache-Control":"no-store"})
     async def action(request):
         if not gate.write_allowed(request): return JSONResponse({"error":"ACCESS_DENIED"},status_code=403)
         # Stream bound before JSON parsing; do not read unbounded request.body().
@@ -176,8 +192,9 @@ def create_ui(admin_client, *, gate, web_dir, audit_path=None, transport_client=
             from .ipc import IPCError
             if isinstance(exc,(BrokerError,IPCError)) and exc.code in {
                     "EXPORT_BUSY","EXPORT_NOT_FOUND","EXPORT_NOT_READY","DISK_LOW","SOURCE_UNAVAILABLE","SCHEDULE_SAVE_FAILED",
-                    "YANDEX_CONNECTION_CHANGED","YANDEX_DEVICE_NOT_FOUND","YANDEX_CANDIDATE_CHANGED","HA_DEVICE_NOT_FOUND","HA_ENTITY_NOT_FOUND","YANDEX_SKILL_NOT_FOUND"}:
+                    "YANDEX_CONNECTION_CHANGED","YANDEX_DEVICE_NOT_FOUND","YANDEX_CANDIDATE_CHANGED","HA_DEVICE_NOT_FOUND","HA_ENTITY_NOT_FOUND","YANDEX_SKILL_NOT_FOUND",
+                    "CONNECTION_OBJECT_NOT_FOUND","CONNECTION_SAVE_FAILED","CONNECTION_SETTINGS_INVALID"}:
                 code=409 if exc.code in {"EXPORT_BUSY","YANDEX_CONNECTION_CHANGED","YANDEX_CANDIDATE_CHANGED"} else 507 if exc.code=="DISK_LOW" else 400 if exc.code in {"YANDEX_DEVICE_NOT_FOUND","HA_DEVICE_NOT_FOUND","HA_ENTITY_NOT_FOUND","YANDEX_SKILL_NOT_FOUND"} else 503
                 return JSONResponse({"error":exc.code},status_code=code,headers={"Cache-Control":"no-store"})
             return JSONResponse({"error":"ADMIN_REQUEST_REJECTED"},status_code=400)
-    return Starlette(routes=[Route("/",index),Route("/app.js",asset),Route("/style.css",asset),Route("/api/status",status),Route("/api/exports/{export_id}/download",download_export),Route("/api/tunnel",save_tunnel,methods=["POST"]),Route("/api/yandex",save_yandex,methods=["POST"]),Route("/api/yandex/events",yandex_events),Route("/api/yandex/links",yandex_matching),Route("/api/yandex/candidates",yandex_matching),Route("/api/action",action,methods=["POST"])])
+    return Starlette(routes=[Route("/",index),Route("/app.js",asset),Route("/style.css",asset),Route("/api/status",status),Route("/api/exports/{export_id}/download",download_export),Route("/api/tunnel",save_tunnel,methods=["POST"]),Route("/api/yandex",save_yandex,methods=["POST"]),Route("/api/yandex/events",yandex_events),Route("/api/yandex/links",yandex_matching),Route("/api/yandex/candidates",yandex_matching),Route("/api/connection",connection_objects),Route("/api/connection/catalog",connection_objects),Route("/api/action",action,methods=["POST"])])

@@ -145,7 +145,13 @@ def create_ui(admin_client, *, gate, web_dir, audit_path=None, transport_client=
             from .yandex_matching import CandidateArgs, MatchingArgs
             params=request.query_params
             if any(len(params.getlist(key))!=1 for key in params):raise ValueError()
-            args=(CandidateArgs if candidates else MatchingArgs).model_validate(dict(params))
+            values=dict(params)
+            if candidates:
+                for key in ("match_name","match_room","match_type"):
+                    if key in values:
+                        if values[key] not in {"true","false"}:raise ValueError()
+                        values[key]=values[key]=="true"
+            args=(CandidateArgs if candidates else MatchingArgs).model_validate(values)
         except ValueError:
             return JSONResponse({"error":"YANDEX_MATCHING_REJECTED"},status_code=400,headers={"Cache-Control":"no-store"})
         try:
@@ -170,8 +176,8 @@ def create_ui(admin_client, *, gate, web_dir, audit_path=None, transport_client=
             from .ipc import IPCError
             if isinstance(exc,(BrokerError,IPCError)) and exc.code in {
                     "EXPORT_BUSY","EXPORT_NOT_FOUND","EXPORT_NOT_READY","DISK_LOW","SOURCE_UNAVAILABLE","SCHEDULE_SAVE_FAILED",
-                    "YANDEX_CONNECTION_CHANGED","YANDEX_DEVICE_NOT_FOUND","YANDEX_CANDIDATE_CHANGED","HA_ENTITY_NOT_FOUND","YANDEX_SKILL_NOT_FOUND"}:
-                code=409 if exc.code in {"EXPORT_BUSY","YANDEX_CONNECTION_CHANGED","YANDEX_CANDIDATE_CHANGED"} else 507 if exc.code=="DISK_LOW" else 400 if exc.code in {"YANDEX_DEVICE_NOT_FOUND","HA_ENTITY_NOT_FOUND","YANDEX_SKILL_NOT_FOUND"} else 503
+                    "YANDEX_CONNECTION_CHANGED","YANDEX_DEVICE_NOT_FOUND","YANDEX_CANDIDATE_CHANGED","HA_DEVICE_NOT_FOUND","HA_ENTITY_NOT_FOUND","YANDEX_SKILL_NOT_FOUND"}:
+                code=409 if exc.code in {"EXPORT_BUSY","YANDEX_CONNECTION_CHANGED","YANDEX_CANDIDATE_CHANGED"} else 507 if exc.code=="DISK_LOW" else 400 if exc.code in {"YANDEX_DEVICE_NOT_FOUND","HA_DEVICE_NOT_FOUND","HA_ENTITY_NOT_FOUND","YANDEX_SKILL_NOT_FOUND"} else 503
                 return JSONResponse({"error":exc.code},status_code=code,headers={"Cache-Control":"no-store"})
             return JSONResponse({"error":"ADMIN_REQUEST_REJECTED"},status_code=400)
     return Starlette(routes=[Route("/",index),Route("/app.js",asset),Route("/style.css",asset),Route("/api/status",status),Route("/api/exports/{export_id}/download",download_export),Route("/api/tunnel",save_tunnel,methods=["POST"]),Route("/api/yandex",save_yandex,methods=["POST"]),Route("/api/yandex/events",yandex_events),Route("/api/yandex/links",yandex_matching),Route("/api/yandex/candidates",yandex_matching),Route("/api/action",action,methods=["POST"])])

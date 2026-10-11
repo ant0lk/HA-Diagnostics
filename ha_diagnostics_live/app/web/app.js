@@ -6,6 +6,8 @@ let activeTab='home', yandexEvents=[], yandexSession, yandexNext, yandexEventsLo
 let yandexFilter='all', yandexHistoryRevision, yandexEventGeneration=0, yandexRefreshQueued=false;
 let yandexHistoryPending=0, yandexBackfillTimer;
 let matchingData, matchingLoading=false, ruleDirty=false, haEditor, haEditorGeneration=0;
+const haMatchFilters=[{key:'match_name',id:'ha-match-name',label:'название'},
+  {key:'match_room',id:'ha-match-room',label:'комната'},{key:'match_type',id:'ha-match-type',label:'тип устройства'}];
 const el=id=>document.getElementById(id);
 function notice(text){el('notice').textContent=text;}
 async function action(op,args={}){
@@ -102,6 +104,7 @@ function renderYandexEvents(){
   el('yandex-history-state').textContent=yandexHistoryPending?'Дополняем старые события по истории HA: '+yandexHistoryPending+'.':yandexEvents.length?'':(status.yandex||{}).configured?emptyText:'Подключите Яндекс и включите сбор, чтобы видеть события устройств.';
 }
 const haReasons={HA_ENTITY_MISSING:'Объект HA не найден',HA_ENTITY_NOT_FOUND:'Объект HA не найден или HA недоступен',HA_SOURCE_UNAVAILABLE:'Не удалось прочитать Home Assistant',HA_CATALOG_INVALID:'Не удалось прочитать реестр HA',HA_STATES_INVALID:'Не удалось прочитать состояния HA',HA_ENTITY_LIMIT:'В HA больше 5000 объектов: сопоставление временно недоступно',HA_NOT_OBSERVED:'Статус HA тогда не собирался',HA_OBSERVATION_STALE:'Проверка HA устарела',HA_UNKNOWN_STATE:'У HA нет достоверного состояния',HA_OUTSIDE_RETENTION:'Проверка HA вне срока хранения',YANDEX_IDENTITY_CHANGED:'ID у поставщика изменился — подтвердите привязку заново',YANDEX_CONNECTION_CHANGED:'Подключение Яндекса изменилось. Обновите список устройств.',YANDEX_CANDIDATE_CHANGED:'Предложение изменилось. Обновите подбор.',YANDEX_SKILL_NOT_FOUND:'Навык больше не найден. Обновите устройства.'};
+Object.assign(haReasons,{HA_DEVICE_NOT_FOUND:'Устройство HA не найдено. Обновите устройства.',HA_ENTITY_DISABLED:'Объект отключён в HA',HA_ENTITY_LIMIT:'В HA больше 5000 устройств или объектов: сопоставление временно недоступно'});
 Object.assign(haReasons,{HA_HISTORY_PENDING:'Читаем историю HA на время события',HA_HISTORY_EMPTY:'В истории HA нет данных на это время',HA_HISTORY_UNAVAILABLE:'Не удалось прочитать историю HA',HA_HISTORY_INVALID:'Не удалось определить исторический статус HA',HA_HISTORY_LIMIT:'История HA превысила предел чтения'});
 function comparisonText(value){
   if(value.comparison==='unlinked')return 'Home Assistant: устройство не связано';
@@ -144,7 +147,7 @@ function renderYandexLinks(){
     if(device.ha_entity_ref){
       const target=entities.get(device.ha_entity_ref),description=document.createElement('p');description.className='matching-target';
       const method={exact:'Точное сопоставление по ID',suggestion:'Подтверждённое предложение',manual:'Ручная привязка'}[device.method]||'Привязка';
-      description.textContent=method+' · '+(target?target.name+' · '+target.entity_id:'Объект не найден');row.append(description);
+      description.textContent=method+' · '+(target?[target.device_name,target.name,target.entity_id].filter(Boolean).join(' · '):'Объект не найден');row.append(description);
     }
     const controls=document.createElement('div');controls.className='matching-actions';
     controls.append(button('Подобрать',()=>openHaLink(device,'suggestion')),button(device.ha_entity_ref?'Изменить вручную':'Связать вручную',()=>openHaLink(device,'manual')));
@@ -180,49 +183,124 @@ function updateIdentityRule(){
   el('yandex-rule-examples').textContent=(matchingData?.devices||[]).filter(device=>device.skill_id===skill).slice(0,3)
     .map(device=>'«'+device.device_name+'»: '+(device.external_id||'внешний ID отсутствует')).join(' · ');
 }
+function renderHaFilters(){
+  if(!haEditor)return;
+  for(const filter of haMatchFilters)el(filter.id).checked=haEditor.filters[filter.key];
+  el('ha-match-name-value').textContent=haEditor.device.device_name||'Не указано — поиск без названия';
+  el('ha-match-room-value').textContent=haEditor.device.room_name||'Не указана — поиск без комнаты';
+  const type=(haEditor.device.type||'').replace(/^devices\.types\./,''),types={light:'Светильник',socket:'Розетка',
+    switch:'Выключатель',sensor:'Датчик',smart_meter:'Счётчик',thermostat:'Термостат',thermostat_ac:'Кондиционер',
+    humidifier:'Увлажнитель',purifier:'Очиститель воздуха',fan:'Вентилятор',openable:'Шторы или ворота',
+    vacuum_cleaner:'Робот-пылесос',camera:'Камера',media_device:'Медиаустройство',smart_speaker:'Умная колонка'};
+  el('ha-match-type-value').textContent=types[type.split('.')[0]]||'Другое устройство';
+  const active=haMatchFilters.filter(filter=>haEditor.filters[filter.key]);
+  haEditor.method=active.length?'suggestion':'manual';
+  el('ha-match-filter-note').textContent=active.length?'Включены: '+active.map(filter=>filter.label).join(', ')+'.':
+    'Все фильтры выключены — доступны все устройства HA и объекты без устройства.';
+  el('ha-link-title').textContent=active.length?'Подбор устройства Home Assistant':'Выбор устройства Home Assistant';
+  el('manual-ha-link').hidden=!active.length;
+}
+function renderHaDevices(){
+  if(!haEditor)return;
+  const search=el('ha-device-search').value.trim().toLocaleLowerCase('ru'),select=el('ha-device-select'),previous=select.value;
+  const candidates=new Map(haEditor.candidates.map(candidate=>[candidate.ha_device_ref,candidate]));
+  let devices=haEditor.loading||haEditor.requestError?[]:haEditor.devices.filter(device=>candidates.has(device.ha_device_ref));
+  devices=devices.filter(device=>[device.name,device.original_name,device.room_name,device.manufacturer,device.model,...device.platforms]
+    .some(value=>(value||'').toLocaleLowerCase('ru').includes(search)));
+  devices.sort((a,b)=>haEditor.method==='suggestion'?candidates.get(b.ha_device_ref).score-candidates.get(a.ha_device_ref).score:
+    a.name.localeCompare(b.name,'ru')||(a.room_name||'').localeCompare(b.room_name||'','ru'));
+  select.replaceChildren(new Option('Выберите устройство HA',''));
+  for(const device of devices.slice(0,100)){
+    const candidate=candidates.get(device.ha_device_ref);
+    const reasons=candidate?.reasons.length?' · '+candidate.reasons.map(value=>({type:'тип устройства',name:'название',similar_name:'похожее название',room:'комната'})[value]).join(', '):'';
+    select.add(new Option([device.name,device.room_name,...device.platforms,'объектов: '+device.entity_count].filter(Boolean).join(' · ')+reasons,device.ha_device_ref));
+  }
+  const unassigned=haEditor.loading||haEditor.requestError?[]:haEditor.entities.filter(entity=>!entity.ha_device_ref);
+  if(haEditor.method==='manual'&&unassigned.length&&(!search||'объекты без устройства'.includes(search)))
+    select.add(new Option('Объекты без устройства · объектов: '+unassigned.length,'no-device'));
+  if([...select.options].some(option=>option.value===previous))select.value=previous;
+  el('manual-ha-link').hidden=haEditor.method==='manual';
+  haEditor.deviceMessage=devices.length>100?'Найдено устройств: '+devices.length+'. Показаны первые 100. Уточните поиск.':
+    haEditor.method==='suggestion'&&!devices.length?'Подходящих устройств нет. Отключите один из фильтров или измените поисковую строку.':
+    !devices.length&&select.options.length===1?'Устройства не найдены.':
+    'Найдено устройств: '+devices.length+'. Сначала выберите устройство Home Assistant.';
+  select.disabled=!!haEditor.loading||!!haEditor.requestError||!!haEditor.error;
+  renderHaChoices();
+}
+function haDeviceEntities(){
+  if(!haEditor)return [];
+  const ref=el('ha-device-select').value;
+  return ref?haEditor.entities.filter(entity=>ref==='no-device'?!entity.ha_device_ref:entity.ha_device_ref===ref):[];
+}
 function renderHaChoices(){
   if(!haEditor)return;
+  const deviceRef=el('ha-device-select').value,target=haEditor.devices.find(device=>device.ha_device_ref===deviceRef);
+  el('ha-entity-choices').hidden=!deviceRef;
+  el('ha-device-detail').textContent=target?[target.manufacturer,target.model,target.room_name,...target.platforms].filter(Boolean).join(' · '):'';
   const search=el('ha-entity-search').value.trim().toLocaleLowerCase('ru'),select=el('ha-entity-select'),previous=select.value;
-  let entities=haEditor.entities.filter(entity=>[entity.name,entity.entity_id,entity.room_name,entity.platform].some(value=>(value||'').toLocaleLowerCase('ru').includes(search)));
-  select.replaceChildren();
-  if(haEditor.method==='manual')select.add(new Option('Выберите объект HA',''));
-  for(const entity of entities.slice(0,100)){
-    const candidate=haEditor.candidates?.find(value=>value.entity_ref===entity.entity_ref);
-    const reasons=candidate?' · '+candidate.reasons.map(value=>({type:'тип',name:'название',similar_name:'похожее название',room:'комната'})[value]).join(', '):'';
-    select.add(new Option(entity.name+' · '+entity.entity_id+(entity.room_name?' · '+entity.room_name:'')+reasons,entity.entity_ref));
+  const all=haDeviceEntities(),entities=all.filter(entity=>[entity.name,entity.entity_id,entity.room_name,entity.platform].some(value=>(value||'').toLocaleLowerCase('ru').includes(search)));
+  select.replaceChildren(new Option('Выберите объект HA',''));
+  for(const entity of entities){
+    const option=new Option(entity.name+' · '+entity.entity_id+(entity.disabled?' · отключён в HA':''),entity.entity_ref);
+    option.disabled=entity.disabled;select.add(option);
   }
-  if([...select.options].some(option=>option.value===previous))select.value=previous;
-  el('ha-link-state').textContent=!entities.length?haEditor.method==='suggestion'?'Подходящих предложений нет. Выберите объект вручную.':'Объекты не найдены.':
-    haEditor.method==='suggestion'?'Совпадения требуют подтверждения. Выберите подходящий объект.':entities.length>100?'Показаны первые 100 объектов. Уточните поиск.':'Выберите объект, который отражает доступность этого устройства.';
-  if(matchingData.ha_error)el('ha-link-state').textContent=haReasons[matchingData.ha_error]||'Home Assistant недоступен.';
-  el('manual-ha-link').hidden=haEditor.method==='manual';updateHaChoice();
+  if([...select.options].some(option=>option.value===previous&&!option.disabled))select.value=previous;
+  el('ha-link-state').textContent=!deviceRef?haEditor.deviceMessage:!all.length?'У этого устройства нет объектов.':
+    !entities.length?'Объекты не найдены.':!all.some(entity=>!entity.disabled)?'Все объекты устройства отключены в HA.':
+    'Объекты выбранного устройства: '+entities.length+' из '+all.length+'. Выберите объект для проверки доступности.'+
+      (all.some(entity=>entity.disabled)?' Отключённые объекты недоступны для выбора.':'');
+  if(haEditor.error)el('ha-link-state').textContent=haReasons[haEditor.error]||'Home Assistant недоступен.';
+  if(haEditor.requestError)el('ha-link-state').textContent=haEditor.requestError;
+  if(haEditor.loading)el('ha-link-state').textContent='Обновляем подбор по включённым фильтрам…';
+  select.disabled=!!haEditor.loading||!!haEditor.requestError||!!haEditor.error;
+  updateHaChoice();
 }
 function updateHaChoice(){
-  const entity=haEditor?.entities.find(value=>value.entity_ref===el('ha-entity-select').value);
-  el('confirm-ha-link').disabled=!entity||!!matchingData?.ha_error;
+  const entity=haDeviceEntities().find(value=>value.entity_ref===el('ha-entity-select').value);
+  el('confirm-ha-link').disabled=!entity||entity.disabled||!!haEditor?.error||!!haEditor?.requestError||!!haEditor?.loading;
   el('ha-entity-detail').textContent=entity?(entity.room_name||'Без комнаты')+' · '+(entity.platform||'Без интеграции')+
     (entity.stable?'':' · У объекта нет устойчивого ID: после переименования понадобится новая привязка.') :'';
 }
-async function openHaLink(device,method){
-  const generation=++haEditorGeneration;
-  haEditor={device,method,session_id:matchingData.session_id,entities:matchingData.entities,candidates:[]};
-  el('ha-link-device').textContent='«'+device.device_name+'» · '+(device.room_name||'Без комнаты');
-  el('ha-entity-search').value='';el('ha-entity-select').replaceChildren();el('ha-entity-detail').textContent='';
-  el('ha-link-title').textContent=method==='suggestion'?'Подбор объекта Home Assistant':'Ручная привязка';
-  el('confirm-ha-link').disabled=true;el('manual-ha-link').hidden=method==='manual';
-  if(!el('ha-link-dialog').open)el('ha-link-dialog').showModal();
-  if(method==='suggestion'){
-    el('ha-link-state').textContent='Подбираем по названию, комнате и типу…';
-    try{
-      const query=new URLSearchParams({session_id:haEditor.session_id,device_ref:device.device_ref});
-      const response=await fetch('api/yandex/candidates?'+query,{cache:'no-store'});
-      if(!response.ok)throw Error('Не удалось получить предложения. Обновите устройства или выберите вручную.');
-      const result=await response.json();if(generation!==haEditorGeneration||!haEditor)return;
-      haEditor.candidates=result.candidates||[];
-      haEditor.entities=haEditor.candidates.map(candidate=>matchingData.entities.find(entity=>entity.entity_ref===candidate.entity_ref)).filter(Boolean);
-    }catch(error){if(generation===haEditorGeneration)el('ha-link-state').textContent=error.message;return;}
+async function refreshHaCandidates(){
+  if(!haEditor)return;
+  const generation=++haEditorGeneration,editor=haEditor;
+  const previousDevice=el('ha-device-select').value||editor.pendingDevice||'';
+  const previousEntity=el('ha-entity-select').value||editor.pendingEntity||'';
+  editor.pendingDevice=previousDevice;editor.pendingEntity=previousEntity;
+  editor.loading=true;editor.requestError=null;renderHaFilters();renderHaDevices();
+  try{
+    const query=new URLSearchParams({session_id:editor.session_id,device_ref:editor.device.device_ref,...editor.filters});
+    const response=await fetch('api/yandex/candidates?'+query,{cache:'no-store'});
+    if(!response.ok)throw Error('Не удалось обновить подбор. Переключите фильтр, чтобы повторить попытку, или обновите устройства.');
+    const result=await response.json();if(generation!==haEditorGeneration||haEditor!==editor)return;
+    editor.candidates=result.device_candidates||[];editor.devices=result.ha_devices||[];
+    editor.entities=result.entities||[];editor.error=result.ha_error;editor.loading=false;
+    editor.pendingDevice='';editor.pendingEntity='';renderHaDevices();
+    if([...el('ha-device-select').options].some(option=>option.value===previousDevice)){
+      el('ha-device-select').value=previousDevice;renderHaChoices();
+      const selected=[...el('ha-entity-select').options].find(option=>option.value===previousEntity&&!option.disabled);
+      if(selected)el('ha-entity-select').value=previousEntity;
+      updateHaChoice();
+    }
+  }catch(error){
+    if(generation!==haEditorGeneration||haEditor!==editor)return;
+    editor.loading=false;editor.requestError=error.message;renderHaDevices();
   }
-  if(generation===haEditorGeneration)renderHaChoices();
+}
+async function openHaLink(device,method){
+  const current=matchingData.entities.find(entity=>entity.entity_ref===device.ha_entity_ref);
+  const previousDevice=haEditor?.device.device_ref===device.device_ref?el('ha-device-select').value:method==='manual'&&current?(current.ha_device_ref||'no-device'):'';
+  const previousEntity=haEditor?.device.device_ref===device.device_ref?el('ha-entity-select').value:method==='manual'&&current?current.entity_ref:'';
+  haEditor={device,method,session_id:matchingData.session_id,devices:matchingData.ha_devices||[],entities:matchingData.entities,
+    candidates:[],error:matchingData.ha_error,filters:Object.fromEntries(haMatchFilters.map(filter=>[filter.key,method==='suggestion'])),
+    pendingDevice:previousDevice,pendingEntity:previousEntity};
+  el('ha-link-device').textContent='«'+device.device_name+'» · '+(device.room_name||'Без комнаты');
+  el('ha-device-search').value='';el('ha-device-select').replaceChildren();el('ha-device-detail').textContent='';
+  el('ha-entity-search').value='';el('ha-entity-select').replaceChildren();el('ha-entity-detail').textContent='';el('ha-entity-choices').hidden=true;
+  el('confirm-ha-link').disabled=true;el('manual-ha-link').hidden=method==='manual';
+  renderHaFilters();
+  if(!el('ha-link-dialog').open)el('ha-link-dialog').showModal();
+  await refreshHaCandidates();
 }
 async function refreshYandexEvents(more=false){
   if(yandexEventsLoading){if(!more)yandexRefreshQueued=true;return;}
@@ -392,13 +470,24 @@ bind('delete-yandex-rule',async()=>{
 });
 bind('close-ha-link',async()=>{el('ha-link-dialog').close();});
 el('ha-link-dialog').addEventListener('close',()=>{haEditor=null;haEditorGeneration++;});
+for(const filter of haMatchFilters)el(filter.id).addEventListener('change',()=>{
+  if(!haEditor)return;haEditor.filters[filter.key]=el(filter.id).checked;refreshHaCandidates();
+});
+el('ha-device-search').addEventListener('input',renderHaDevices);
+el('ha-device-select').addEventListener('change',()=>{el('ha-entity-search').value='';el('ha-entity-select').value='';renderHaChoices();});
 el('ha-entity-search').addEventListener('input',renderHaChoices);
 el('ha-entity-select').addEventListener('change',updateHaChoice);
-bind('manual-ha-link',async()=>{if(haEditor)await openHaLink(haEditor.device,'manual');});
+bind('manual-ha-link',async()=>{
+  if(!haEditor)return;for(const filter of haMatchFilters)haEditor.filters[filter.key]=false;
+  await refreshHaCandidates();
+});
 el('ha-link-form').addEventListener('submit',async event=>{
   event.preventDefault();if(!haEditor)return;el('confirm-ha-link').disabled=true;
   try{
-    await matchingAction('set_yandex_link',{session_id:haEditor.session_id,device_ref:haEditor.device.device_ref,entity_ref:el('ha-entity-select').value,method:haEditor.method});
+    const entity=haDeviceEntities().find(value=>value.entity_ref===el('ha-entity-select').value);
+    if(!entity||entity.disabled||haEditor.error||haEditor.requestError||haEditor.loading)return;
+    await matchingAction('set_yandex_link',{session_id:haEditor.session_id,device_ref:haEditor.device.device_ref,
+      ha_device_ref:entity.ha_device_ref,entity_ref:entity.entity_ref,method:haEditor.method,...haEditor.filters});
     el('ha-link-dialog').close();await refreshYandexLinks();await refreshYandexEvents();notice('Связь сохранена. Старые события дополняются статусом из истории Home Assistant на время события.');
   }catch(error){el('ha-link-state').textContent=error.message;}finally{updateHaChoice();}
 });

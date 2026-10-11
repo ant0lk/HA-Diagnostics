@@ -19,6 +19,7 @@ from .broker import BrokerError
 ENTITY_ID = r"[a-z_][a-z0-9_]*\.[a-z0-9_]+"
 DEVICE_REF = r"\[YANDEX_DEVICE_[a-f0-9]{16}\]"
 ENTITY_REF = r"\[HA_MATCH_[a-f0-9]{16}\]"
+HA_DEVICE_REF = r"\[HA_DEVICE_[a-f0-9]{16}\]"
 MAX_HA_ENTITIES = 5000
 REGISTRY_SECONDS = 300
 
@@ -54,7 +55,8 @@ def compatible(kind, entity):
         "sensor": {"sensor", "binary_sensor", "event"}, "smart_meter": {"sensor"},
         "thermostat": {"climate"}, "thermostat_ac": {"climate"}, "humidifier": {"humidifier"},
         "purifier": {"fan"}, "fan": {"fan"}, "openable": {"cover"}, "vacuum_cleaner": {"vacuum"},
-        "camera": {"camera"}, "media_device": {"media_player"}, "smart_speaker": {"media_player"}}
+        # Consoles and other media devices may expose power through a switch.
+        "camera": {"camera"}, "media_device": {"media_player", "switch"}, "smart_speaker": {"media_player"}}
     return entity["domain"] in domains.get(suffix, set())
 
 
@@ -62,13 +64,20 @@ class MatchingArgs(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, hide_input_in_errors=True)
 
 
-class CandidateArgs(MatchingArgs):
+class MatchFilters(MatchingArgs):
+    match_name: bool = True
+    match_room: bool = True
+    match_type: bool = True
+
+
+class CandidateArgs(MatchFilters):
     device_ref: str = Field(pattern="^" + DEVICE_REF + "$")
     session_id: str = Field(pattern=r"^ys_[a-f0-9]{32}$")
 
 
 class LinkArgs(CandidateArgs):
     entity_ref: str | None = Field(default=None, pattern="^" + ENTITY_REF + "$")
+    ha_device_ref: str | None = Field(default=None, pattern="^" + HA_DEVICE_REF + "$")
     method: str = Field(default="manual", pattern=r"^(manual|suggestion)$")
 
 
@@ -79,12 +88,39 @@ class IdentityRuleArgs(MatchingArgs):
     external_prefix: str = Field(default="", max_length=256, pattern=r"^[A-Za-z0-9_.:/-]*$")
 
 
+def candidate_rank(name, room, names, target_room, same_type, filters):
+    """Disabled criteria neither exclude nor rank a candidate.
+
+    A missing source name/room cannot constrain the search. The fixed name
+    threshold ensures removing any criterion only broadens the candidate set.
+    """
+    similarity = max((SequenceMatcher(None, name, normalized(other)).ratio()
+        if other else 0 for other in names), default=0) if filters.match_name and name else 0
+    same_room = bool(filters.match_room and room and room == normalized(target_room))
+    if filters.match_name and name and similarity < .45:
+        return None
+    if filters.match_room and room and not same_room:
+        return None
+    if filters.match_type and not same_type:
+        return None
+    reasons = []
+    if filters.match_name and name:
+        reasons.append("name" if similarity == 1 else "similar_name")
+    if same_room:
+        reasons.append("room")
+    if filters.match_type and same_type:
+        reasons.append("type")
+    return {"reasons": reasons,
+        "score": round(similarity * 70 + (20 if same_room else 0) + (10 if filters.match_type and same_type else 0))}
+
+
 class HomeAssistantMatcher:
     def __init__(self, store, redactor, clock, scrub):
         self.store, self.db, self.redactor = store, store.db, redactor
         self.clock, self.scrub = clock, scrub
         self.sources = None
         self.entities = {}
+        self.devices = {}
         self.identities = {}
         self.catalog_at = self.observed_at = None
         self.error = None
@@ -143,8 +179,9 @@ class HomeAssistantMatcher:
                         if re.fullmatch(ENTITY_ID, entity_id):
                             ref = self.redactor.alias("HA_MATCH", json.dumps(["entity_id", entity_id]))
                             self.entities[ref] = {"entity_ref": ref, "entity_id": entity_id, "name": entity_id,
-                                "device_name": None, "room_name": None, "domain": entity_id.split(".")[0],
-                                "platform": None, "stable": False}
+                                "ha_device_ref": None, "device_name": None, "room_name": None,
+                                "domain": entity_id.split(".")[0], "platform": None, "stable": False,
+                                "disabled": False}
                     if len(self.entities) > MAX_HA_ENTITIES:
                         raise BrokerError("HA_ENTITY_LIMIT")
                     for entity in self.entities.values():
@@ -154,6 +191,8 @@ class HomeAssistantMatcher:
                         if attrs.get("friendly_name"):
                             entity["name"] = self.label(attrs["friendly_name"]) or entity["name"]
                         state, reason = availability(row, entity["domain"])
+                        if entity["disabled"]:
+                            state, reason = "unknown", "HA_ENTITY_DISABLED"
                         entity.update(ha_status=state, reason=reason)
                     self.observed_at, self.error = self.clock(), None
             except asyncio.CancelledError:
@@ -164,16 +203,27 @@ class HomeAssistantMatcher:
                     "HA_CATALOG_INVALID", "HA_STATES_INVALID", "HA_ENTITY_LIMIT"} else "HA_SOURCE_UNAVAILABLE"
 
     def _catalog(self, registry, devices, areas):
-        if len(registry) > MAX_HA_ENTITIES:
+        if len(registry) > MAX_HA_ENTITIES or len(devices) > MAX_HA_ENTITIES:
             raise BrokerError("HA_ENTITY_LIMIT")
         device_map = {row["id"]: row for row in devices if isinstance(row, dict) and isinstance(row.get("id"), str)}
         area_map = {row["area_id"]: row for row in areas if isinstance(row, dict) and isinstance(row.get("area_id"), str)}
+        ha_devices = {}
+        device_refs = {}
+        for device_id, row in device_map.items():
+            ref = self.redactor.alias("HA_DEVICE", device_id)
+            device_refs[device_id] = ref
+            area = area_map.get(row.get("area_id"), {})
+            ha_devices[ref] = {"ha_device_ref": ref,
+                "name": self.label(row.get("name_by_user") or row.get("name")) or "Устройство HA",
+                "original_name": self.label(row.get("name")), "room_name": self.label(area.get("name")),
+                "manufacturer": self.label(row.get("manufacturer")), "model": self.label(row.get("model")),
+                "platforms": [], "entity_count": 0}
         incoming = {}
         self._disabled_ids = {row.get("entity_id") for row in registry if isinstance(row, dict)
             and isinstance(row.get("entity_id"), str) and row.get("disabled_by")}
         for row in registry:
             entity_id = row.get("entity_id") if isinstance(row, dict) else None
-            if not isinstance(entity_id, str) or not re.fullmatch(ENTITY_ID, entity_id) or row.get("disabled_by"):
+            if not isinstance(entity_id, str) or not re.fullmatch(ENTITY_ID, entity_id):
                 continue
             domain = entity_id.split(".")[0]
             stable = isinstance(row.get("id"), str) and bool(row["id"])
@@ -182,16 +232,28 @@ class HomeAssistantMatcher:
             stable = stable or bool(row.get("unique_id"))
             ref = self.redactor.alias("HA_MATCH", json.dumps(key, sort_keys=True))
             device = device_map.get(row.get("device_id"), {})
+            device_ref = device_refs.get(row.get("device_id"))
             area = area_map.get(row.get("area_id") or device.get("area_id"), {})
             previous = self.entities.get(ref, {})
             incoming[ref] = {"entity_ref": ref, "entity_id": entity_id,
                 "name": self.label(row.get("name") or row.get("original_name") or device.get("name_by_user")
                     or device.get("name") or entity_id),
+                "ha_device_ref": device_ref,
                 "device_name": self.label(device.get("name_by_user") or device.get("name")),
                 "room_name": self.label(area.get("name")), "domain": domain,
                 "platform": self.label(row.get("platform")), "stable": stable,
+                "disabled": bool(row.get("disabled_by")),
                 "ha_status": previous.get("ha_status", "unknown"), "reason": previous.get("reason")}
+            if device_ref:
+                target = ha_devices[device_ref]
+                target["entity_count"] += 1
+                platform = incoming[ref]["platform"]
+                if platform and platform not in target["platforms"]:
+                    target["platforms"].append(platform)
+        for target in ha_devices.values():
+            target["platforms"].sort()
         self.entities = incoming
+        self.devices = ha_devices
 
     def inventory(self, session, catalog):
         with self.db:
@@ -229,7 +291,7 @@ class HomeAssistantMatcher:
                 if not external.startswith(prefix):
                     continue
                 entity = by_id.get(external[len(prefix):])
-                if entity and entity["stable"]:
+                if entity and entity["stable"] and not entity["disabled"]:
                     self._write_link(session, row["device_ref"], entity["entity_ref"], "exact", row["identity_key"])
 
     def _write_link(self, session, ref, entity_ref, method, identity_key):
@@ -242,30 +304,40 @@ class HomeAssistantMatcher:
             raise BrokerError("YANDEX_DEVICE_NOT_FOUND")
         return dict(row)
 
-    def suggestions(self, session, ref):
+    def suggestions(self, session, ref, filters=None):
+        """Retain entity proposals for callers predating the device-first UI."""
         device = self._device(session, ref)
         if self.error:
             return []
+        filters = filters or MatchFilters()
         name, room = normalized(device["device_name"]), normalized(device["room_name"])
         candidates = []
         for entity in self.entities.values():
-            if not compatible(device["type"], entity):
+            if entity["disabled"]:
                 continue
-            names = [normalized(entity["name"]), normalized(entity["device_name"])]
-            similarity = max(SequenceMatcher(None, name, other).ratio() if name and other else 0 for other in names)
-            same_room = bool(room and room == normalized(entity["room_name"]))
-            if similarity < .45 or similarity < .65 and not same_room:
-                continue
-            reasons = ["type"]
-            if similarity == 1:
-                reasons.append("name")
-            elif similarity >= .65:
-                reasons.append("similar_name")
-            if same_room:
-                reasons.append("room")
-            candidates.append({"entity_ref": entity["entity_ref"], "reasons": reasons,
-                "score": round(similarity * 70 + (20 if same_room else 0) + 10)})
+            rank = candidate_rank(name, room, [entity["name"], entity["device_name"]],
+                entity["room_name"], compatible(device["type"], entity), filters)
+            if rank is not None:
+                candidates.append({"entity_ref": entity["entity_ref"], **rank})
         return sorted(candidates, key=lambda row: (-row["score"], row["entity_ref"]))[:5]
+
+    def device_suggestions(self, session, ref, filters=None):
+        """Match registry devices using only the owner's enabled criteria."""
+        device = self._device(session, ref)
+        if self.error:
+            return []
+        filters = filters or MatchFilters()
+        name, room = normalized(device["device_name"]), normalized(device["room_name"])
+        compatible_devices = {entity["ha_device_ref"] for entity in self.entities.values()
+            if filters.match_type and not entity["disabled"] and compatible(device["type"], entity)}
+        candidates = []
+        for target in self.devices.values():
+            rank = candidate_rank(name, room, [target["name"], target["original_name"]],
+                target["room_name"], target["ha_device_ref"] in compatible_devices, filters)
+            if rank is not None:
+                candidates.append({"ha_device_ref": target["ha_device_ref"], **rank})
+        return sorted(candidates, key=lambda row: (-row["score"], normalized(self.devices[row["ha_device_ref"]]["name"]),
+            row["ha_device_ref"]))
 
     def set_link(self, args, session):
         if args.session_id != session:
@@ -273,10 +345,19 @@ class HomeAssistantMatcher:
         self._device(session, args.device_ref)
         identity = self.identity(session, args.device_ref)
         if args.entity_ref:
-            if self.error or args.entity_ref not in self.entities:
+            entity = self.entities.get(args.entity_ref)
+            if self.error or entity is None or entity["disabled"]:
                 raise BrokerError("HA_ENTITY_NOT_FOUND")
-            if args.method == "suggestion" and args.entity_ref not in {
-                    candidate["entity_ref"] for candidate in self.suggestions(session, args.device_ref)}:
+            if args.ha_device_ref:
+                if args.ha_device_ref not in self.devices:
+                    raise BrokerError("HA_DEVICE_NOT_FOUND")
+                if entity["ha_device_ref"] != args.ha_device_ref:
+                    raise BrokerError("YANDEX_CANDIDATE_CHANGED")
+                if args.method == "suggestion" and args.ha_device_ref not in {
+                        candidate["ha_device_ref"] for candidate in self.device_suggestions(session, args.device_ref, args)}:
+                    raise BrokerError("YANDEX_CANDIDATE_CHANGED")
+            elif args.method == "suggestion" and args.entity_ref not in {
+                    candidate["entity_ref"] for candidate in self.suggestions(session, args.device_ref, args)}:
                 raise BrokerError("YANDEX_CANDIDATE_CHANGED")
         with self.db:
             self._write_link(session, args.device_ref, args.entity_ref,
@@ -347,6 +428,11 @@ class HomeAssistantMatcher:
             value["ha_name"] = self.label(row[0]) if row else None
         return value
 
+    def ha_catalog(self):
+        return {"ha_devices": list(self.devices.values()),
+            "entities": [{key: ("unknown" if key == "ha_status" and self.error else value)
+                for key, value in entity.items() if key != "reason"} for entity in self.entities.values()]}
+
     def panel(self, settings):
         self.apply_exact(settings.session_id)
         now = self.clock()
@@ -358,14 +444,14 @@ class HomeAssistantMatcher:
             status = "unknown" if stale else row["status"]
             identity = self.identity(settings.session_id, row["device_ref"]) or {}
             devices.append({"device_ref": row["device_ref"], "device_name": self.label(row["device_name"]) or row["name"],
+                "type": row["type"],
                 "home_name": self.label(row["home_name"]), "room_name": self.label(row["room_name"]),
                 "status": status, "observed_at": observed, "skill_id": identity.get("skill_id"),
                 "external_id": identity.get("external_id"),
                 **self.comparison(settings.session_id, row["device_ref"], status, settings.poll_seconds)})
         rules = [dict(row) for row in self.db.execute("SELECT skill_id,external_prefix FROM local_ui.identity_rules WHERE session_id=?", (settings.session_id,))]
         return {"session_id": settings.session_id, "devices": devices,
-            "entities": [{key: ("unknown" if key == "ha_status" and self.error else value)
-                for key, value in entity.items() if key != "reason"} for entity in self.entities.values()],
+            **self.ha_catalog(),
             "rules": rules, "ha_observed_at": timestamp(self.observed_at) if self.observed_at else None,
             "ha_error": self.error, "entity_limit": MAX_HA_ENTITIES}
 

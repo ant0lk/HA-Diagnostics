@@ -640,7 +640,9 @@ class YandexHistory:
         if args.session_id != self.settings.session_id:
             raise BrokerError("YANDEX_CONNECTION_CHANGED")
         await self.matcher.refresh()
-        return {"candidates": self.matcher.suggestions(args.session_id, args.device_ref),
+        return {"candidates": self.matcher.suggestions(args.session_id, args.device_ref, args),
+            "device_candidates": self.matcher.device_suggestions(args.session_id, args.device_ref, args),
+            **self.matcher.ha_catalog(),
             "ha_error": self.matcher.error}
 
     async def set_link(self, args):

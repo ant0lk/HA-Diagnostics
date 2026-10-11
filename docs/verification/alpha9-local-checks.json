@@ -1,0 +1,17 @@
+{
+  "product_version": "1.0.0-alpha.9",
+  "date": "2026-10-11",
+  "pytest": {
+    "passed": 419,
+    "skipped": 2,
+    "failures": 0,
+    "errors": 0,
+    "seconds": 63.748,
+    "evidence": "alpha9-pytest.xml",
+    "sha256": "168458c19c8065c906eefcbc1209d8a925e46267b2e1764d79b2e8e3bae0ef02"
+  },
+  "source_live_copies_match": true,
+  "live_yandex_account_verified": false,
+  "ha_os_install_verified": false,
+  "live_recorder_backfill_verified": false
+}

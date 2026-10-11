@@ -2,9 +2,11 @@
 from datetime import datetime, timedelta, timezone
 import json
 import zipfile
+from itertools import product
 
 import httpx
 import pytest
+from pydantic import ValidationError
 
 from ha_diagnostics.broker import BrokerError
 from ha_diagnostics.exporter import ExportService, StartExportArgs
@@ -13,7 +15,7 @@ from ha_diagnostics.ipc import AdminIPCServer, IPCError
 from ha_diagnostics.redaction import Redactor
 from ha_diagnostics.ui import AdminGate, create_ui
 from ha_diagnostics.yandex_history import YandexHistory, YandexArgs, YandexEventsArgs, stamp
-from ha_diagnostics.yandex_matching import CandidateArgs, LinkArgs, IdentityRuleArgs, MatchingArgs
+from ha_diagnostics.yandex_matching import CandidateArgs, LinkArgs, IdentityRuleArgs, MatchingArgs, MatchFilters
 
 TOKEN = "YANDEX_MATCHING_SECRET_123456"
 HA_TOKEN = "HOME_ASSISTANT_MATCHING_SECRET_123456"
@@ -161,18 +163,223 @@ async def test_exact_prefix_manual_override_and_explicit_unlink(setup):
     assert history.matcher.link(history.settings.session_id, device_ref())["method"] == "blocked"
 
 
-async def test_suggestions_rank_room_and_type_but_never_auto_confirm(setup):
+async def test_suggestions_require_enabled_filters_and_never_auto_confirm(setup):
     history, clock, api, ha = setup
     args = CandidateArgs(session_id=history.settings.session_id, device_ref=device_ref())
     candidates = (await history.candidates(args))["candidates"]
     assert candidates[0]["entity_ref"] == entity_ref(history)
-    assert candidates[0]["reasons"] == ["type", "name", "room"]
-    assert len(candidates) == 2
+    assert candidates[0]["reasons"] == ["name", "room", "type"]
+    assert len(candidates) == 1
     assert history.matcher.link(history.settings.session_id, device_ref()) is None
     with pytest.raises(BrokerError, match="YANDEX_CANDIDATE_CHANGED"):
         await history.set_link(link_args(history, entity_ref(history, "switch.socket"), "suggestion"))
     await history.set_link(link_args(history, method="suggestion"))
     assert history.matcher.link(history.settings.session_id, device_ref())["method"] == "suggestion"
+
+
+@pytest.mark.parametrize("kind", ["devices.types.media_device", "devices.types.media_device.tv_box"])
+async def test_media_device_suggests_mqtt_power_switch(setup, kind):
+    history, clock, api, ha = setup
+    api.catalog[0].update(name="PlayStation 5", type=kind)
+    ha.registries["entities"][2].update(name="PlayStation 5")
+    ha.registries["devices"][2].update(name="PlayStation 5")
+    ha.states[2]["state"] = "off"
+    # A sensor on the same console must not become a power candidate.
+    ha.registries["entities"].append({"id": "ps-activity", "entity_id": "sensor.ps_activity",
+        "platform": "mqtt", "device_id": "ha-socket", "name": "activity"})
+    clock.advance(301)
+    await history.poll_once()
+    args = CandidateArgs(session_id=history.settings.session_id, device_ref=device_ref())
+    candidates = (await history.candidates(args))["candidates"]
+    assert [row["entity_ref"] for row in candidates] == [entity_ref(history, "switch.socket")]
+    assert candidates[0]["reasons"] == ["name", "room", "type"]
+    assert history.matcher.link(history.settings.session_id, device_ref()) is None
+    await history.set_link(link_args(history, entity_ref(history, "switch.socket"), "suggestion"))
+    panel = await history.panel_links(MatchingArgs())
+    device = next(row for row in panel["devices"] if row["device_ref"] == device_ref())
+    assert device["ha_status"] == "available"
+
+
+async def test_device_candidates_use_registry_device_names_and_include_all_child_domains(setup):
+    history, clock, api, ha = setup
+    api.catalog[0].update(name="PlayStation 5", type="devices.types.media_device")
+    ha.registries["devices"][2].update(name="PlayStation 5", manufacturer="Sony", model="PS5")
+    # None of the console's objects has a matching label or media/power domain.
+    ha.registries["entities"][2].update(entity_id="sensor.console_activity", name="Activity")
+    ha.states[2]["entity_id"] = "sensor.console_activity"
+    ha.registries["entities"].extend([
+        {"id": "ps-connection", "entity_id": "binary_sensor.console_connection", "name": "Connection",
+         "platform": "mqtt", "device_id": "ha-socket"},
+        {"id": "ps-command", "entity_id": "button.console_command", "name": "Command",
+         "platform": "mqtt", "device_id": "ha-socket"},
+        {"id": "ps-diagnostic", "entity_id": "sensor.console_diagnostic", "name": "Diagnostic",
+         "platform": "mqtt", "device_id": "ha-socket", "disabled_by": "integration"}])
+    # A similarly named entity of a different device must not nominate that device.
+    ha.states[0]["attributes"]["friendly_name"] = "PlayStation 5"
+    clock.advance(301)
+    await history.poll_once()
+    args = CandidateArgs(session_id=history.settings.session_id, device_ref=device_ref(), match_type=False)
+    assert (await history.candidates(CandidateArgs(session_id=args.session_id, device_ref=args.device_ref)))["device_candidates"] == []
+    result = await history.candidates(args)
+    console = next(row for row in result["ha_devices"] if row["name"] == "PlayStation 5")
+    assert result["device_candidates"] == [{"ha_device_ref": console["ha_device_ref"],
+        "reasons": ["name", "room"], "score": 90}]
+    assert console["platforms"] == ["mqtt"] and console["entity_count"] == 4
+    assert console["manufacturer"] == "Sony" and console["model"] == "PS5"
+    children = [row for row in result["entities"] if row["ha_device_ref"] == console["ha_device_ref"]]
+    assert {row["domain"] for row in children} == {"sensor", "binary_sensor", "button"}
+    disabled = next(row for row in children if row["entity_id"] == "sensor.console_diagnostic")
+    assert disabled["disabled"] and disabled["ha_status"] == "unknown"
+    assert history.matcher.link(history.settings.session_id, device_ref()) is None
+    # Any enabled object of a suggested device can be confirmed, irrespective of its type/name.
+    selected = next(row for row in children if row["entity_id"] == "binary_sensor.console_connection")
+    await history.set_link(LinkArgs(session_id=history.settings.session_id, device_ref=device_ref(),
+        ha_device_ref=console["ha_device_ref"], entity_ref=selected["entity_ref"], method="suggestion", match_type=False))
+    saved = history.matcher.link(history.settings.session_id, device_ref())
+    assert saved["entity_ref"] == selected["entity_ref"] and saved["method"] == "suggestion"
+    with pytest.raises(BrokerError, match="HA_ENTITY_NOT_FOUND"):
+        await history.set_link(LinkArgs(session_id=history.settings.session_id, device_ref=device_ref(),
+            ha_device_ref=console["ha_device_ref"], entity_ref=disabled["entity_ref"], method="manual"))
+
+
+async def test_device_selection_rejects_objects_from_another_device_and_stale_membership(setup):
+    history, clock, api, ha = setup
+    panel = await history.panel_links(MatchingArgs())
+    lamp = next(row for row in panel["entities"] if row["entity_id"] == "light.bedroom")
+    target = lamp["ha_device_ref"]
+    for method in ("manual", "suggestion"):
+        with pytest.raises(BrokerError, match="YANDEX_CANDIDATE_CHANGED"):
+            await history.set_link(LinkArgs(session_id=history.settings.session_id, device_ref=device_ref(),
+                ha_device_ref=target, entity_ref=entity_ref(history, "light.other"), method=method))
+    with pytest.raises(BrokerError, match="HA_DEVICE_NOT_FOUND"):
+        await history.set_link(LinkArgs(session_id=history.settings.session_id, device_ref=device_ref(),
+            ha_device_ref="[HA_DEVICE_0000000000000000]", entity_ref=lamp["entity_ref"]))
+    socket = next(row for row in panel["entities"] if row["entity_id"] == "switch.socket")
+    with pytest.raises(BrokerError, match="YANDEX_CANDIDATE_CHANGED"):
+        await history.set_link(LinkArgs(session_id=history.settings.session_id, device_ref=device_ref(),
+            ha_device_ref=socket["ha_device_ref"], entity_ref=socket["entity_ref"], method="suggestion"))
+    assert history.matcher.link(history.settings.session_id, device_ref()) is None
+    ha.registries["entities"][0]["device_id"] = "ha-other"
+    clock.advance(301)
+    await history.poll_once()
+    with pytest.raises(BrokerError, match="YANDEX_CANDIDATE_CHANGED"):
+        await history.set_link(LinkArgs(session_id=history.settings.session_id, device_ref=device_ref(),
+            ha_device_ref=target, entity_ref=lamp["entity_ref"], method="suggestion"))
+
+
+async def test_device_names_rooms_and_stable_ids_are_separate_from_entity_names(setup):
+    history, clock, api, ha = setup
+    result = await history.candidates(CandidateArgs(session_id=history.settings.session_id, device_ref=device_ref(), match_room=False))
+    assert len(result["device_candidates"]) == 2  # Duplicate names remain two registry devices.
+    refs = [next(row["ha_device_ref"] for row in result["ha_devices"] if row["room_name"] == room
+        and row["name"] == "Светильник") for room in ("Спальня", "Кухня")]
+    assert len(set(refs)) == 2
+    lamp = history.matcher.devices[refs[0]]
+    assert lamp["room_name"] == "Спальня" and lamp["entity_count"] == 2
+    assert history.matcher.devices[refs[1]]["room_name"] == "Кухня"
+    ha.registries["devices"][0].update(name_by_user="Прикроватный свет", manufacturer=TOKEN, model=HA_TOKEN)
+    ha.registries["entities"][0]["area_id"] = "kitchen"
+    clock.advance(301)
+    await history.poll_once()
+    result = await history.candidates(CandidateArgs(session_id=history.settings.session_id, device_ref=device_ref()))
+    assert result["device_candidates"][0]["ha_device_ref"] == refs[0]
+    assert history.matcher.devices[refs[0]]["name"] == "Прикроватный свет"
+    assert history.matcher.devices[refs[0]]["room_name"] == "Спальня"
+    assert history.matcher.entities[entity_ref(history)]["room_name"] == "Кухня"
+    assert TOKEN not in json.dumps(result) and HA_TOKEN not in json.dumps(result)
+    standalone = next(row for row in result["entities"] if row["entity_id"] == "sensor.virtual")
+    assert standalone["ha_device_ref"] is None
+    await history.set_link(LinkArgs(session_id=history.settings.session_id, device_ref=device_ref(),
+        entity_ref=standalone["entity_ref"], ha_device_ref=None, method="manual"))
+    assert history.matcher.link(history.settings.session_id, device_ref())["entity_ref"] == standalone["entity_ref"]
+
+
+@pytest.mark.parametrize("match_name,match_room,match_type", list(product((True, False), repeat=3)))
+async def test_switching_each_filter_expands_only_by_that_criterion(setup, match_name, match_room, match_type):
+    history, clock, api, ha = setup
+    # Same name/room, different type.
+    ha.registries["devices"][2]["name"] = "Светильник"
+    # Same room/type, different name.
+    ha.registries["devices"].append({"id": "ha-renamed", "area_id": "bedroom", "name": "ZZZZZZ"})
+    ha.registries["entities"].append({"id": "registry-renamed", "entity_id": "light.renamed",
+        "device_id": "ha-renamed", "name": "ZZZZZZ"})
+    clock.advance(301)
+    await history.poll_once()
+    args = CandidateArgs(session_id=history.settings.session_id, device_ref=device_ref(),
+        match_name=match_name, match_room=match_room, match_type=match_type)
+    result = await history.candidates(args)
+    candidates = {row["ha_device_ref"]: row for row in result["device_candidates"]}
+    refs = {row["entity_id"]: row["ha_device_ref"] for row in result["entities"]}
+    expected = {refs["light.bedroom"]}
+    if not match_room:
+        expected.add(refs["light.other"])
+    if not match_type:
+        expected.add(refs["switch.socket"])
+    if not match_name:
+        expected.add(refs["light.renamed"])
+    assert set(candidates) == expected
+    assert candidates[refs["light.bedroom"]]["reasons"] == [key for key, active in
+        (("name", match_name), ("room", match_room), ("type", match_type)) if active]
+    assert candidates[refs["light.bedroom"]]["score"] == 70 * match_name + 20 * match_room + 10 * match_type
+    assert history.matcher.link(history.settings.session_id, device_ref()) is None
+    # Confirming a newly visible candidate must use the same criteria.
+    for entity_id in ("light.other", "switch.socket", "light.renamed"):
+        if refs[entity_id] not in expected:
+            continue
+        await history.set_link(LinkArgs(**args.model_dump(), ha_device_ref=refs[entity_id],
+            entity_ref=entity_ref(history, entity_id), method="suggestion"))
+        assert history.matcher.link(args.session_id, args.device_ref)["entity_ref"] == entity_ref(history, entity_id)
+
+
+async def test_filters_do_not_hide_candidates_after_first_five_or_require_missing_source_room(setup):
+    history, clock, api, ha = setup
+    api.catalog[0]["room_name"] = None
+    ha.registries["devices"].extend({"id": "ha-extra-" + str(index), "name": "Светильник " + str(index)}
+        for index in range(10))
+    ha.registries["entities"].extend({"id": "extra-" + str(index), "entity_id": "light.extra_" + str(index),
+        "device_id": "ha-extra-" + str(index)} for index in range(10))
+    clock.advance(301)
+    await history.poll_once()
+    args = CandidateArgs(session_id=history.settings.session_id, device_ref=device_ref())
+    result = await history.candidates(args)
+    assert len(result["device_candidates"]) == 12
+    assert all("room" not in row["reasons"] for row in result["device_candidates"])
+    last = result["device_candidates"][-1]["ha_device_ref"]
+    entity = next(row for row in result["entities"] if row["ha_device_ref"] == last)
+    await history.set_link(LinkArgs(**args.model_dump(), ha_device_ref=last,
+        entity_ref=entity["entity_ref"], method="suggestion"))
+    assert history.matcher.link(args.session_id, args.device_ref)["entity_ref"] == entity["entity_ref"]
+    all_devices = await history.candidates(args.model_copy(update={"match_name": False, "match_room": False, "match_type": False}))
+    assert {row["ha_device_ref"] for row in all_devices["device_candidates"]} == {
+        row["ha_device_ref"] for row in all_devices["ha_devices"]}
+
+
+async def test_type_filter_does_not_use_disabled_objects_and_source_metadata_is_visible(setup):
+    history, clock, api, ha = setup
+    ha.registries["entities"][0]["disabled_by"] = "user"
+    clock.advance(301)
+    await history.poll_once()
+    args = CandidateArgs(session_id=history.settings.session_id, device_ref=device_ref())
+    assert (await history.candidates(args))["device_candidates"] == []
+    result = await history.candidates(args.model_copy(update={"match_type": False}))
+    assert len(result["device_candidates"]) == 1
+    lamp = result["device_candidates"][0]["ha_device_ref"]
+    connection = next(row for row in result["entities"] if row["entity_id"] == "binary_sensor.lamp_connection")
+    with pytest.raises(BrokerError, match="YANDEX_CANDIDATE_CHANGED"):
+        await history.set_link(LinkArgs(**args.model_dump(), ha_device_ref=lamp,
+            entity_ref=connection["entity_ref"], method="suggestion"))
+    await history.set_link(LinkArgs(**args.model_copy(update={"match_type": False}).model_dump(),
+        ha_device_ref=lamp, entity_ref=connection["entity_ref"], method="suggestion"))
+    panel = await history.panel_links(MatchingArgs())
+    assert next(row for row in panel["devices"] if row["device_ref"] == device_ref())["type"] == "devices.types.light"
+
+
+def test_matching_filter_defaults_and_strict_boolean_validation():
+    assert MatchFilters().model_dump() == {"match_name": True, "match_room": True, "match_type": True}
+    for key in MatchFilters.model_fields:
+        for value in ("false", 0, None):
+            with pytest.raises(ValidationError):
+                MatchFilters.model_validate({key: value})
 
 
 async def test_saved_identity_survives_entity_rename_and_restart_without_name_matching(setup, tmp_path):
@@ -365,6 +572,12 @@ async def test_owner_only_matching_routes_csrf_and_ipc(setup, tmp_path):
             headers = {"X-Remote-User-Id": "owner", "X-Ingress-Path": "/api/hassio_ingress/test", "Sec-Fetch-Site": "same-origin"}
             query = {"session_id": history.settings.session_id, "device_ref": device_ref()}
             assert (await client.get("/api/yandex/candidates", params=query, headers=headers)).status_code == 200
+            response = await client.get("/api/yandex/candidates", params=query | {"match_room": "false"}, headers=headers)
+            assert response.status_code == 200 and len(response.json()["device_candidates"]) == 2
+            for filters in ({"match_name": "0"}, {"match_room": "False"}, {"match_type": "yes"}, {"match_model": "true"}):
+                assert (await client.get("/api/yandex/candidates", params=query | filters, headers=headers)).status_code == 400
+            duplicated = list(query.items()) + [("match_type", "true"), ("match_type", "false")]
+            assert (await client.get("/api/yandex/candidates", params=duplicated, headers=headers)).status_code == 400
             for url in ("/api/yandex/links?url=evil", "/api/yandex/candidates?device_ref=bad", "/api/yandex/candidates?session_id=a&session_id=b"):
                 assert (await client.get(url, headers=headers)).status_code == 400
             body = {"op": "set_yandex_link", "args": link_args(history).model_dump()}
